@@ -277,17 +277,27 @@ let random_object_at (a: f32) (b: f32) (rng: rng) : (rng, obj) =
 let random_world (seed: i32) (n: i32) =
   let mk_obj a b = let rng = rnge.rng_from_seed [seed, a ^ b]
                    in random_object_at (r32 a) (r32 b) rng
-  let (rngs, objs) = map (\a -> map (mk_obj a) (-n..<n)) (-n..<n)
+  let (rngs, objs) = tabulate_2d (n*2+1) (n*2+1) (\a b -> mk_obj (a-n) (b-n))
                      |> map unzip |> unzip
   let rng = rnge.join_rng (flatten rngs)
 
   let sphere {center, radius, material} : obj =
-    #sphere { center0 = center, center1 = center, radius, time0 = 0, time1 = 0, material }
+    #sphere { center0 = center, center1 = center,
+              time0 = 0, time1 = 0,
+              radius, material }
 
-  let fixed_objs = [ sphere {center=vec(0,-1000,0), radius=1000, material=#lambertian {albedo=vec(0.5,0.5,0.5)}}
-                   , sphere {center=vec(0,1,0), radius=1, material=#dielectric {ref_idx=1.5}}
-                   , sphere {center=vec(-4,1,0), radius=1, material=#lambertian {albedo=vec(0.4,0.2,0.1)}}
-                   , sphere {center=vec(4,1,0), radius=1, material=#metal {albedo=vec(0.6,0.6,0.5), fuzz=0}}
+  let fixed_objs = [ sphere {center=vec(0,-1000,0),
+                             radius=1000,
+                             material=#lambertian {albedo=vec(0.5,0.5,0.5)}}
+                   , sphere {center=vec(0,1,0),
+                             radius=1,
+                             material=#dielectric {ref_idx=1.5}}
+                   , sphere {center=vec(-4,1,0),
+                             radius=1,
+                             material=#lambertian {albedo=vec(0.4,0.2,0.1)}}
+                   , sphere {center=vec(4,1,0),
+                             radius=1,
+                             material=#metal {albedo=vec(0.6,0.6,0.5), fuzz=0}}
                    ]
 
   let world = flatten objs ++ fixed_objs
@@ -296,20 +306,26 @@ let random_world (seed: i32) (n: i32) =
 
 import "lib/github.com/athas/matte/colour"
 
-let render (max_depth: i32) (nx: i32) (ny: i32) (nss: [ny][nx]i32) (world: bvh []) (cam: camera) (rngs: [ny][nx]rng) =
-  let sample j i (rng, acc) = let (rng, ud) = rand rng
-                              let (rng, vd) = rand rng
-                              let u = (r32(i) + ud) / r32(nx)
-                              let v = (r32(j) + vd) / r32(ny)
-                              let (rng, r) = get_ray cam u v rng
-                              let (rng, col) = color max_depth world r rng
-                              in (rng, acc vec3.+ col)
-  let pixel j i = let rng = rngs[j,i]
-                  let ns = (reverse nss)[j,i]
-                  let (rng, col) = iterate ns (sample j i) (rng, vec(0,0,0))
-                  let col = ((1/r32 ns) `vec3.scale` col) |> vec3.map f32.sqrt
-                  in (rng, argb.from_rgba col.x col.y col.z 0)
-  in tabulate_2d ny nx pixel |> reverse
+let render (max_depth: i32) (nx: i32) (ny: i32) (ns: i32) (world: bvh []) (cam: camera) (rngs: [ny][nx]rng) =
+  let start rng =
+    (rng, vec(0,0,0))
+  let end (_, acc) =
+    let col = ((1/r32 ns) `vec3.scale` acc) |> vec3.map f32.sqrt
+    in argb.from_rgba col.x col.y col.z 0
+  let update (j, i) (rng, acc) =
+    let (rng, ud) = rand rng
+    let (rng, vd) = rand rng
+    let u = (r32(i) + ud) / r32(nx)
+    let v = (r32(j) + vd) / r32(ny)
+    let (rng, r) = get_ray cam u v rng
+    let (rng, col) = color max_depth world r rng
+    in (rng, acc vec3.+ col)
+  let space = tabulate_2d ny nx (\j i -> (j,i))
+  in rngs
+     |> map (map start)
+     |> iterate ns (map2 (map2 update) space)
+     |> map (map end)
+     |> reverse
 
 -- ==
 -- compiled input { 800 400 200 }
@@ -324,6 +340,17 @@ let main (nx: i32) (ny: i32) (ns: i32) (nobj: i32): [ny][nx]argb.colour =
   let (rng, world) = random_world (nx ^ ny ^ ns) nobj
   let bvh = bvh_mk world cam.time0 cam.time1
   let rngs = rnge.split_rng (nx*ny) rng |> unflatten ny nx
-  let nss = replicate ny (replicate nx ns)
   let max_depth = 50
-  in render max_depth nx ny nss bvh cam rngs |> map (map (.2))
+  in render max_depth nx ny ns bvh cam rngs
+
+let testmain (nx: i32) (ny: i32) (ns: i32) (nobj: i32) =
+  let lookfrom = vec(13,2,3)
+  let lookat = vec(0,0,0)
+  let dist_to_focus = 10
+  let aperture = 0
+  let cam = camera lookfrom lookat (vec(0,1,0)) 20 (r32 nx / r32 ny)
+                   aperture dist_to_focus 0 1
+  let (rng, world) = random_world (nx ^ ny ^ ns) nobj
+  let bvh = bvh_mk world cam.time0 cam.time1
+  let mortons = mortons (obj_aabb cam.time0 cam.time1) world
+  in map2 (==) mortons (rotate 1 mortons)

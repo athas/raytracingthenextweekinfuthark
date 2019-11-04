@@ -16,7 +16,7 @@ let mk_radix_tree [n] (L: [n]u32) : []inner =
                           -- Handle duplicates by using index as
                           -- tiebreaker if necessary.
                           in if Li == Lj
-                             then u32.clz (u32.i32 i ^ u32.i32 j)
+                             then 32 + u32.clz (u32.i32 i ^ u32.i32 j)
                              else u32.clz (Li ^ Lj)
                      else -1
 
@@ -62,8 +62,9 @@ let mk_radix_tree [n] (L: [n]u32) : []inner =
     in ({left, right}, (set_left_parent, i), (set_right_parent, i))
 
   let (inners, parents_a, parents_b) = tabulate (n-1) node |> unzip3
+  let k = (n-1)*2
   let parents = scatter (replicate (n-1) (-1))
-                        (map (.1) parents_a ++ map (.1) parents_b)
-                        (map (.2) parents_a ++ map (.2) parents_b)
+                        (map (.1) parents_a ++ map (.1) parents_b : [k]i32)
+                        (map (.2) parents_a ++ map (.2) parents_b : [k]i32)
 
   in map2 (\{left, right} parent -> {left, right, parent}) inners parents
