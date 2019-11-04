@@ -43,7 +43,7 @@ let mortons [n] 't (bbf: t -> aabb) (ts: [n]t) =
   let ts = radix_sort_by_key morton u32.num_bits u32.get_bit ts
   in map morton ts
 
-let mk_bvh [n] 't (bbf: t -> aabb) (ts: [n]t) : bvh [n] t =
+let bvh_mk [n] 't (bbf: t -> aabb) (ts: [n]t) : bvh [n] t =
   let centers = map (bbf >-> aabb_center) ts
   let x_max = f32.maximum (map (.x) centers)
   let y_max = f32.maximum (map (.y) centers)
@@ -74,7 +74,7 @@ let mk_bvh [n] 't (bbf: t -> aabb) (ts: [n]t) : bvh [n] t =
                map (update inners) inners
   in {L = ts, I = inners}
 
-let bvh_fold_filter [n] 'a 'b (contains: aabb -> bool) (op: b -> a -> b) (init: b) (t: bvh [n] a) =
+let bvh_fold [n] 'a 'b (contains: aabb -> bool) (op: b -> a -> b) (init: b) (t: bvh [n] a) =
   (.1) <|
   loop (acc, cur, prev) = (init, 0, #inner (-1))
   while cur != -1 do
@@ -94,13 +94,3 @@ let bvh_fold_filter [n] 'a 'b (contains: aabb -> bool) (op: b -> a -> b) (init: 
      else
        -- All of this nodes' children are uninteresting.
        (acc, node.parent, #inner cur)
-
--- ==
--- compiled random input { [1000]f32 [1000]f32 [1000]f32 }
--- compiled random input { [10000]f32 [10000]f32 [10000]f32 }
-
-let main (xs: []f32) (ys: []f32) (zs: []f32) =
-  let aabb x y z : aabb = {min={x=x-1, y=y-1, z=z-1},
-                           max={x=x+1, y=y+1, z=z+1}}
-  let bvh = mk_bvh id (map3 aabb xs ys zs)
-  in map (.aabb.min.x) (bvh.I)

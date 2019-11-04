@@ -165,19 +165,8 @@ let bvh_hit [n] (bvh: bvh [n]) (r: ray) (t_min: f32) (t_max: f32) : hit =
     match obj_hit obj r t_min t_max
     case #no_hit -> (hit, t_max)
     case #hit h -> (#hit h, h.t)
-  in bvh_fold_filter contains closest_hit (#no_hit, t_max) bvh
+  in bvh_fold contains closest_hit (#no_hit, t_max) bvh
      |> (.1)
-
-let bvh_mk [n] (objs: [n]obj) (t0: f32) (t1: f32) : bvh [n] =
-  mk_bvh (obj_aabb t0 t1) objs
-
-let hit [n] (objs: [n]obj) (r: ray) (t_min: f32) (t_max: f32) : hit =
-  (loop (hit, closest_so_far) = (#no_hit, t_max) for obj in objs do
-   let hit' = match obj
-              case #sphere s -> sphere_hit s r t_min closest_so_far
-   in match hit'
-      case #no_hit -> (hit, closest_so_far)
-      case #hit h -> (#hit h, h.t)).1
 
 type scatter = #scatter {attenuation: vec3, scattered: ray}
              | #no_scatter
@@ -338,19 +327,7 @@ let main (nx: i32) (ny: i32) (ns: i32) (nobj: i32): [ny][nx]argb.colour =
   let cam = camera lookfrom lookat (vec(0,1,0)) 20 (r32 nx / r32 ny)
                    aperture dist_to_focus 0 1
   let (rng, world) = random_world (nx ^ ny ^ ns) nobj
-  let bvh = bvh_mk world cam.time0 cam.time1
+  let bvh = bvh_mk (obj_aabb  cam.time0 cam.time1) world
   let rngs = rnge.split_rng (nx*ny) rng |> unflatten ny nx
   let max_depth = 50
   in render max_depth nx ny ns bvh cam rngs
-
-let testmain (nx: i32) (ny: i32) (ns: i32) (nobj: i32) =
-  let lookfrom = vec(13,2,3)
-  let lookat = vec(0,0,0)
-  let dist_to_focus = 10
-  let aperture = 0
-  let cam = camera lookfrom lookat (vec(0,1,0)) 20 (r32 nx / r32 ny)
-                   aperture dist_to_focus 0 1
-  let (rng, world) = random_world (nx ^ ny ^ ns) nobj
-  let bvh = bvh_mk world cam.time0 cam.time1
-  let mortons = mortons (obj_aabb cam.time0 cam.time1) world
-  in map2 (==) mortons (rotate 1 mortons)
