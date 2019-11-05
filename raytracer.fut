@@ -18,7 +18,7 @@ let schlick (cosine: f32) (ref_idx: f32) =
 
 import "lib/github.com/diku-dk/cpprandom/random"
 
-module rnge = minstd_rand
+module rnge = pcg32
 module dist = uniform_real_distribution f32 rnge
 type rng = rnge.rng
 
@@ -188,6 +188,9 @@ let sphere_aabb (s: sphere) (t0: f32) (t1: f32) : aabb =
 type xy_rect = {x0: f32, x1: f32, y0: f32, y1: f32, k: f32,
                 material: material}
 
+let xy_rect_aabb ({x0, x1, y0, y1, k, material=_}: xy_rect) : aabb =
+  { min = vec(x0, y0, k-0.0001), max = vec(x1, y1, k+0.0001) }
+
 let xy_rect_hit (rect: xy_rect) (r: ray) (t0: f32) (t1: f32) : hit =
   let {x0, x1, y0, y1, k, material} = rect
   let t = (k - r.origin.z) / r.direction.z
@@ -201,22 +204,75 @@ let xy_rect_hit (rect: xy_rect) (r: ray) (t0: f32) (t1: f32) : hit =
                          normal = vec(0, 0, 1),
                          t, material}
 
-let xy_rect_aabb ({x0, x1, y0, y1, k, material=_}: xy_rect) : aabb =
-  { min = vec(x0, y0, k-0.0001), max = vec(x1, y1, k+0.0001) }
+type xz_rect = {x0: f32, x1: f32, z0: f32, z1: f32, k: f32,
+                material: material}
 
-type obj = #sphere sphere
-         | #xy_rect xy_rect
+let xz_rect_aabb ({x0, x1, z0, z1, k, material=_}: xz_rect) : aabb =
+  { min = vec(x0, k-0.0001, z0), max = vec(x1, k+0.0001, z1) }
+
+let xz_rect_hit (rect: xz_rect) (r: ray) (t0: f32) (t1: f32) : hit =
+  let {x0, x1, z0, z1, k, material} = rect
+  let t = (k - r.origin.y) / r.direction.y
+  in if t < t0 || t > t1 then #no_hit
+     else let x = r.origin.x + t*r.direction.x
+          let z = r.origin.z + t*r.direction.z
+          in if x < x0 || x > x1 || z < z0 || z > z1 then #no_hit
+             else #hit { u = (x-x0)/(x1-x0),
+                         v = (z-z0)/(z1-z0),
+                         p = point_at_parameter r t,
+                         normal = vec(0, 1, 0),
+                         t, material}
+
+type yz_rect = {y0: f32, y1: f32, z0: f32, z1: f32, k: f32,
+                material: material}
+
+let yz_rect_aabb ({y0, y1, z0, z1, k, material=_}: yz_rect) : aabb =
+  { min = vec(k-0.0001, y0, z0), max = vec(k+0.0001, y1, z1) }
+
+let yz_rect_hit (rect: yz_rect) (r: ray) (t0: f32) (t1: f32) : hit =
+  let {y0, y1, z0, z1, k, material} = rect
+  let t = (k - r.origin.x) / r.direction.x
+  in if t < t0 || t > t1 then #no_hit
+     else let y = r.origin.y + t*r.direction.y
+          let z = r.origin.z + t*r.direction.z
+          in if y < y0 || y > y1 || z < z0 || z > z1 then #no_hit
+             else #hit { u = (y-y0)/(y1-y0),
+                         v = (z-z0)/(z1-z0),
+                         p = point_at_parameter r t,
+                         normal = vec(1, 0, 0),
+                         t, material}
+
+type transform = #flip | #noflip
+
+type obj = {transform: transform,
+            obj: #sphere sphere
+                 | #xy_rect xy_rect
+                 | #xz_rect xz_rect
+                 | #yz_rect yz_rect}
+
+let obj_mk x : obj = {obj = x, transform = #noflip }
+
+let obj_flip (obj: obj) = obj with transform = #flip
 
 let obj_hit (obj: obj) (r: ray) (t0: f32) (t1: f32) : hit =
-  match obj
-  case #sphere s -> sphere_hit s r t0 t1
-  case #xy_rect rect -> xy_rect_hit rect r t0 t1
+  let h = match obj.obj
+          case #sphere s -> sphere_hit s r t0 t1
+          case #xy_rect rect -> xy_rect_hit rect r t0 t1
+          case #xz_rect rect -> xz_rect_hit rect r t0 t1
+          case #yz_rect rect -> yz_rect_hit rect r t0 t1
+  in match (obj.transform, h)
+     case (#flip, #hit h) ->
+       #hit (h with normal = ((-1) `vec3.scale` h.normal))
+     case _ ->
+       h
 
 type bounded = #unbounded | #bounded aabb
 let obj_aabb (t0: f32) (t1: f32) (obj: obj) : aabb =
-  match obj
+  match obj.obj
   case #sphere s -> sphere_aabb s t0 t1
   case #xy_rect rect -> xy_rect_aabb rect
+  case #xz_rect rect -> xz_rect_aabb rect
+  case #yz_rect rect -> yz_rect_aabb rect
 
 import "bvh"
 
@@ -322,83 +378,17 @@ let color (max_depth: i32) ({textures, bvh}: scene [])
           color))
   in (rng, color)
 
-let random_object_at (a: f32) (b: f32) (rng: rng) : (rng, obj) =
-  let (rng, center0) = let (rng, xd) = rand rng
-                      let (rng, yd) = rand rng
-                      in (rng, vec(a+0.9*xd, 0.2, b+0.9*yd))
-  let (rng, center1) = let (rng, yd) = rand rng
-                       in (rng, center0 with y = center0.y + 0.5 * yd)
-  let randp rng = let (rng, x) = rand rng
-                  let (rng, y) = rand rng
-                  in (rng, x * y)
-  let (rng, choose_mat) = rand rng
-  let (rng, material) =
-    if choose_mat > 0.95 then
-      (rng, #dielectric {ref_idx=1.5})
-    else
-    let (rng, x) = randp rng
-    let (rng, y) = randp rng
-    let (rng, z) = randp rng
-    let albedo = vec(x,y,z)
-    let (rng, fuzz) = rand rng
-    in if choose_mat > 0.8
-       then (rng, #metal {albedo, fuzz})
-       else (rng, #lambertian {albedo=#constant {color=albedo}})
-  in (rng,
-      #sphere {center0, center1,
-               time0 = 0, time1 = 1,
-               radius=0.2, material})
-
-let random_world (seed: i32) (n: i32) =
-  let mk_obj a b = let rng = rnge.rng_from_seed [seed, a ^ b]
-                   in random_object_at (r32 a) (r32 b) rng
-  let (rngs, objs) = tabulate_2d (n*2+1) (n*2+1) (\a b -> mk_obj (a-n) (b-n))
-                     |> map unzip |> unzip
-  let rng = rnge.join_rng (flatten rngs)
-
-  let sphere {center, radius, material} : obj =
-    #sphere { center0 = center, center1 = center,
-              time0 = 0, time1 = 0,
-              radius, material }
-
-  let fixed_objs =
-    [ sphere {center=vec(0,-1000,0),
-              radius=1000,
-              material=#lambertian {albedo=#noise {scale=5}}}
-    , sphere {center=vec(0,1,0),
-              radius=1,
-              material=#dielectric {ref_idx=1.5}}
-    , sphere {center=vec(-4,1,0),
-              radius=1,
-              material=#lambertian {albedo=#image}}
-    , sphere {center=vec(4,1,0),
-              radius=1,
-              material=#metal {albedo=vec(0.6,0.6,0.5), fuzz=0}}
-    ]
-
-  let world = flatten objs ++ fixed_objs
-
-  in (rng, world)
-
-let light_world : []obj =
-  let sphere {center, radius, material} : obj =
-    #sphere { center0 = center, center1 = center,
-              time0 = 0, time1 = 0,
-              radius, material }
-  in [ sphere {center=vec(0,-1000,0),
-               radius=1000,
-               material=#lambertian {albedo=#noise {scale=5}}},
-       sphere {center=vec(0,2,0),
-               radius=2,
-               material=#lambertian {albedo=#noise {scale=15}}},
-       sphere {center=vec(-2,2,0),
-               radius=2,
-               material=#metal {albedo=vec(0.6,0.6,0.5), fuzz=0}},
-       sphere {center=vec(0,7,0),
-               radius=3,
-               material=#diffuse_light {emit=#constant {color=vec(4,4,4)}}},
-       #xy_rect { x0=3, x1=5, y0=2, y1=4, k = -2,
-                  material=#diffuse_light {emit=#constant {color=vec(4,4,4)}}}
+let cornell_box : []obj =
+  let red = #lambertian {albedo=#constant {color=vec(0.65, 0.05, 0.05)}}
+  let white = #lambertian {albedo=#constant {color=vec(0.73, 0.73, 0.73)}}
+  let green = #lambertian {albedo=#constant {color=vec(0.12, 0.45, 0.15)}}
+  let light = #diffuse_light {emit=#constant {color=vec(15, 15, 15)}}
+  in [ obj_flip (obj_mk (#yz_rect {y0=0, y1=555, z0=0, z1=555, k=555, material=green}))
+     , obj_mk (#yz_rect {y0=0, y1=555, z0=0, z1=555, k=0, material=red})
+     , obj_mk (#xz_rect {x0=213, x1=343, z0=227, z1=332, k=554, material=light})
+     , obj_flip (obj_mk (#xz_rect {x0=0, x1=555, z0=0, z1=555, k=555, material=white}))
+     , obj_mk (#xz_rect {x0=0, x1=555, z0=0, z1=555, k=0, material=white})
+     , obj_flip (obj_mk (#xy_rect {x0=0, x1=555, y0=0, y1=555, k=555, material=white}))
      ]
 
 import "lib/github.com/athas/matte/colour"
@@ -430,15 +420,16 @@ let render (max_depth: i32) (nx: i32) (ny: i32) (ns: i32) (scene: scene []) (cam
 import "perlin"
 module perlin = mk_perlin rnge
 
-let main (nx: i32) (ny: i32) (ns: i32) (nobj: i32) (img: [][][3]u8): [ny][nx]argb.colour =
-  let lookfrom = 2 `vec3.scale` vec(13,2,3)
-  let lookat = vec(0,2,0)
+let main (nx: i32) (ny: i32) (ns: i32) (img: [][][3]u8): [ny][nx]argb.colour =
+  let lookfrom = vec(278,278,-800)
+  let lookat = vec(278,278,0)
   let dist_to_focus = 10
   let aperture = 0
-  let cam = camera lookfrom lookat (vec(0,1,0)) 20 (r32 nx / r32 ny)
+  let vfov = 40
+  let cam = camera lookfrom lookat (vec(0,1,0)) vfov (r32 nx / r32 ny)
                    aperture dist_to_focus 0 1
-  let (rng, world) = random_world (nx ^ ny ^ ns) nobj
-  let world = light_world
+  let rng = rnge.rng_from_seed [nx, ny, ns]
+  let world = cornell_box
   let bvh = bvh_mk (obj_aabb  cam.time0 cam.time1) world
   let (rng, p) = perlin.mk_perlin rng 256
   let textures = mk_texture_value (perlin.turb p 7) img
