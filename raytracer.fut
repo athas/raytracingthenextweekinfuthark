@@ -25,9 +25,9 @@ type rng = rnge.rng
 let rand : rng -> (rng, f32) = dist.rand (0,1)
 
 let random_in_unit_sphere rng =
-  let new rng = let (rng, x) = rand rng
-                let (rng, y) = rand rng
-                let (rng, z) = rand rng
+  let new rng = let (rng, x) = dist.rand (-1, 1) rng
+                let (rng, y) = dist.rand (-1, 1) rng
+                let (rng, z) = dist.rand (-1, 1) rng
                 in (rng, vec(x,y,z))
   let outside_sphere = vec3.quadrance >-> (>=1)
   in iterate_while ((.2) >-> outside_sphere) ((.1) >-> new) (new rng)
@@ -301,7 +301,7 @@ let color (max_depth: i32) ({textures, bvh}: scene [])
     loop
       ((rng, r), (depth, light, color)) =
       ((rng, r), (0, vec(1,1,1), vec(0,0,0))) while depth < max_depth do
-      match bvh_hit bvh r 0.00001 f32.highest
+      match bvh_hit bvh r 0.001 f32.highest
       case #hit h ->
         (let emitted = emitted textures h.material h.u h.v h.p
          in match scattering textures r h rng
