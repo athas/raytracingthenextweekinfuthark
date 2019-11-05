@@ -18,7 +18,7 @@ let schlick (cosine: f32) (ref_idx: f32) =
 
 import "lib/github.com/diku-dk/cpprandom/random"
 
-module rnge = pcg32
+module rnge = xorshift128plus
 module dist = uniform_real_distribution f32 rnge
 type rng = rnge.rng
 
@@ -86,14 +86,36 @@ let aabb_hit ({min, max}: aabb) ({origin, direction, time=_}: ray) (tmin: f32) (
     let tmin = f32.max t0 tmin
     let tmax = f32.min t1 tmax
     in (tmin, tmax)
-  let (tmin, tmax) = iter min.x max.x origin.x direction.x tmin tmax
+  let (tmin, tmax) =
+    iter min.x max.x origin.x direction.x tmin tmax
   in if tmax <= tmin then false
-     else let (tmin, tmax) = iter min.y max.y origin.y direction.y tmin tmax
+     else let (tmin, tmax) =
+            iter min.y max.y origin.y direction.y tmin tmax
           in if tmax <= tmin then false
-             else let (tmin, tmax) = iter min.z max.z origin.z direction.z tmin tmax
+             else let (tmin, tmax) =
+                    iter min.z max.z origin.z direction.z tmin tmax
                   in !(tmax <= tmin)
 
-type material = #lambertian {albedo: vec3}
+-- Our checkered textures are not as expressive as in the C++
+-- implementation (no recursion).
+type texture = #constant {color: vec3}
+             | #checkered {even: vec3, odd: vec3}
+             | #noise {scale: f32}
+
+type texture_value = texture -> (u: f32) -> (v: f32) -> (p: vec3) -> vec3
+
+let mk_texture_value (turb: vec3 -> f32) : texture_value =
+  \(t: texture) (_u: f32) (_v: f32) (p: vec3) : vec3 ->
+    match t
+    case #constant {color} ->
+      color
+    case #checkered {even, odd} ->
+      let sines = f32.sin(10*p.x) * f32.sin(10*p.y) * f32.sin(10*p.z)
+      in if sines < 0 then odd else even
+    case #noise {scale} ->
+      vec3.scale (0.5 * (1 + f32.sin(scale * p.z + 10 * turb p))) (vec(1,1,1))
+
+type material = #lambertian {albedo: texture}
               | #metal {albedo: vec3, fuzz: f32}
               | #dielectric {ref_idx: f32}
 
@@ -111,7 +133,8 @@ let sphere_center (s: sphere) (time: f32): vec3 =
   if s.time0 == s.time1
   then s.center0
   else s.center0 vec3.+
-       (((time - s.time0) / (s.time1 - s.time0)) `vec3.scale` (s.center1 vec3.- s.center0))
+       (((time - s.time0) / (s.time1 - s.time0)) `vec3.scale`
+               (s.center1 vec3.- s.center0))
 
 let sphere_hit (s: sphere) (r: ray) (t_min: f32) (t_max: f32) : hit =
   let oc = vec3.(r.origin - sphere_center s r.time)
@@ -171,13 +194,14 @@ let bvh_hit [n] (bvh: bvh [n]) (r: ray) (t_min: f32) (t_max: f32) : hit =
 type scatter = #scatter {attenuation: vec3, scattered: ray}
              | #no_scatter
 
-let scattering (r: ray) (h: hit_info) (rng: rng) : (rng, scatter) =
+let scattering (texture_value: texture_value)
+               (r: ray) (h: hit_info) (rng: rng) : (rng, scatter) =
   match h.material
 
   case #lambertian {albedo} ->
     let (rng, bounce) = random_in_unit_sphere rng
     let target = vec3.(h.p + h.normal + bounce)
-    in (rng, #scatter {attenuation=albedo,
+    in (rng, #scatter {attenuation=texture_value albedo 0 0 h.p,
                        scattered={origin = h.p,
                                   direction = target vec3.- h.p,
                                   time = r.time}})
@@ -217,12 +241,16 @@ let scattering (r: ray) (h: hit_info) (rng: rng) : (rng, scatter) =
                                                  direction=reflected,
                                                  time=r.time}})
 
-let color (max_depth: i32) (bvh: bvh []) (r: ray) (rng: rng) : (rng, vec3) =
+type scene [n] = {textures: texture_value,
+                  bvh: bvh [n]}
+
+let color (max_depth: i32) ({textures, bvh}: scene [])
+          (r: ray) (rng: rng) : (rng, vec3) =
   let ((rng, _), (_, color)) =
     loop ((rng, r), (depth, color)) = ((rng, r), (0, vec(1,1,1))) while depth < max_depth
     do match bvh_hit bvh r 0.00001 f32.highest
        case #hit h ->
-         (match scattering r h rng
+         (match scattering textures r h rng
           case (rng, #scatter {attenuation, scattered}) ->
             ((rng, scattered), (depth+1, attenuation vec3.* color))
           case (rng, #no_scatter) ->
@@ -257,7 +285,7 @@ let random_object_at (a: f32) (b: f32) (rng: rng) : (rng, obj) =
     let (rng, fuzz) = rand rng
     in if choose_mat > 0.8
        then (rng, #metal {albedo, fuzz})
-       else (rng, #lambertian {albedo})
+       else (rng, #lambertian {albedo=#constant {color=albedo}})
   in (rng,
       #sphere {center0, center1,
                time0 = 0, time1 = 1,
@@ -275,19 +303,20 @@ let random_world (seed: i32) (n: i32) =
               time0 = 0, time1 = 0,
               radius, material }
 
-  let fixed_objs = [ sphere {center=vec(0,-1000,0),
-                             radius=1000,
-                             material=#lambertian {albedo=vec(0.5,0.5,0.5)}}
-                   , sphere {center=vec(0,1,0),
-                             radius=1,
-                             material=#dielectric {ref_idx=1.5}}
-                   , sphere {center=vec(-4,1,0),
-                             radius=1,
-                             material=#lambertian {albedo=vec(0.4,0.2,0.1)}}
-                   , sphere {center=vec(4,1,0),
-                             radius=1,
-                             material=#metal {albedo=vec(0.6,0.6,0.5), fuzz=0}}
-                   ]
+  let fixed_objs =
+    [ sphere {center=vec(0,-1000,0),
+              radius=1000,
+              material=#lambertian {albedo=#noise {scale=10}}}
+    , sphere {center=vec(0,1,0),
+              radius=1,
+              material=#dielectric {ref_idx=1.5}}
+    , sphere {center=vec(-4,1,0),
+              radius=1,
+              material=#lambertian {albedo=#noise {scale=10}}}
+    , sphere {center=vec(4,1,0),
+              radius=1,
+              material=#metal {albedo=vec(0.6,0.6,0.5), fuzz=0}}
+    ]
 
   let world = flatten objs ++ fixed_objs
 
@@ -295,7 +324,7 @@ let random_world (seed: i32) (n: i32) =
 
 import "lib/github.com/athas/matte/colour"
 
-let render (max_depth: i32) (nx: i32) (ny: i32) (ns: i32) (world: bvh []) (cam: camera) (rngs: [ny][nx]rng) =
+let render (max_depth: i32) (nx: i32) (ny: i32) (ns: i32) (scene: scene []) (cam: camera) (rngs: [ny][nx]rng) =
   let start rng =
     (rng, vec(0,0,0))
   let end (_, acc) =
@@ -307,7 +336,7 @@ let render (max_depth: i32) (nx: i32) (ny: i32) (ns: i32) (world: bvh []) (cam: 
     let u = (r32(i) + ud) / r32(nx)
     let v = (r32(j) + vd) / r32(ny)
     let (rng, r) = get_ray cam u v rng
-    let (rng, col) = color max_depth world r rng
+    let (rng, col) = color max_depth scene r rng
     in (rng, acc vec3.+ col)
   let space = tabulate_2d ny nx (\j i -> (j,i))
   in rngs
@@ -319,6 +348,9 @@ let render (max_depth: i32) (nx: i32) (ny: i32) (ns: i32) (world: bvh []) (cam: 
 -- ==
 -- compiled input { 800 400 200 }
 
+import "perlin"
+module perlin = mk_perlin rnge
+
 let main (nx: i32) (ny: i32) (ns: i32) (nobj: i32): [ny][nx]argb.colour =
   let lookfrom = vec(13,2,3)
   let lookat = vec(0,0,0)
@@ -328,6 +360,9 @@ let main (nx: i32) (ny: i32) (ns: i32) (nobj: i32): [ny][nx]argb.colour =
                    aperture dist_to_focus 0 1
   let (rng, world) = random_world (nx ^ ny ^ ns) nobj
   let bvh = bvh_mk (obj_aabb  cam.time0 cam.time1) world
+  let (rng, p) = perlin.mk_perlin rng 256
+  let textures = mk_texture_value (perlin.turb p 7)
+  let scene = {bvh, textures}
   let rngs = rnge.split_rng (nx*ny) rng |> unflatten ny nx
   let max_depth = 50
-  in render max_depth nx ny ns bvh cam rngs
+  in render max_depth nx ny ns scene cam rngs
