@@ -185,70 +185,49 @@ let sphere_aabb (s: sphere) (t0: f32) (t1: f32) : aabb =
           let box1 = sphere_box (sphere_center s t1) s.radius
           in surrounding_box box0 box1
 
-type xy_rect = {x0: f32, x1: f32, y0: f32, y1: f32, k: f32,
-                material: material}
+type rect_type = #xy | #xz | #yz
 
-let xy_rect_aabb ({x0, x1, y0, y1, k, material=_}: xy_rect) : aabb =
-  { min = vec(x0, y0, k-0.0001), max = vec(x1, y1, k+0.0001) }
+type rect = {rtype: rect_type,
+             a0: f32, a1: f32,
+             b0: f32, b1: f32,
+             k: f32,
+             material: material}
 
-let xy_rect_hit (rect: xy_rect) (r: ray) (t0: f32) (t1: f32) : hit =
-  let {x0, x1, y0, y1, k, material} = rect
-  let t = (k - r.origin.z) / r.direction.z
+let rect_abc (rtype: rect_type) (v: vec3) : {a: f32, b: f32, c: f32} =
+  match rtype case #xy -> {a = v.x, b=v.y, c=v.z}
+              case #xz -> {a = v.x, b=v.z, c=v.y}
+              case #yz -> {a = v.y, b=v.z, c=v.x}
+
+let rect_cba (rtype: rect_type) {a: f32, b: f32, c: f32} : vec3 =
+  match rtype case #xy -> {x=a, y=b, z=c}
+              case #xz -> {x=a, y=c, z=b}
+              case #yz -> {x=c, y=a, z=b}
+
+let rect_aabb (rect: rect) : aabb =
+  let {rtype, a0, a1, b0, b1, k, material=_} = rect
+  in { min = rect_cba rtype {a=a0, b=b0, c=k-0.0001},
+       max = rect_cba rtype {a=a1, b=b1, c=k+0.0001} }
+
+let rect_hit (rect: rect) (r: ray) (t0: f32) (t1: f32) : hit =
+  let {rtype, a0, a1, b0, b1, k, material} = rect
+  let origin = rect_abc rtype r.origin
+  let direction = rect_abc rtype r.direction
+  let t = (k - origin.c) / direction.c
   in if t < t0 || t > t1 then #no_hit
-     else let x = r.origin.x + t*r.direction.x
-          let y = r.origin.y + t*r.direction.y
-          in if x < x0 || x > x1 || y < y0 || y > y1 then #no_hit
-             else #hit { u = (x-x0)/(x1-x0),
-                         v = (y-y0)/(y1-y0),
+     else let a = origin.a + t*direction.a
+          let b = origin.b + t*direction.b
+          in if a < a0 || a > a1 || b < b0 || b > b1 then #no_hit
+             else #hit { u = (a-a0)/(a1-a0),
+                         v = (b-b0)/(b1-b0),
                          p = point_at_parameter r t,
-                         normal = vec(0, 0, 1),
-                         t, material}
-
-type xz_rect = {x0: f32, x1: f32, z0: f32, z1: f32, k: f32,
-                material: material}
-
-let xz_rect_aabb ({x0, x1, z0, z1, k, material=_}: xz_rect) : aabb =
-  { min = vec(x0, k-0.0001, z0), max = vec(x1, k+0.0001, z1) }
-
-let xz_rect_hit (rect: xz_rect) (r: ray) (t0: f32) (t1: f32) : hit =
-  let {x0, x1, z0, z1, k, material} = rect
-  let t = (k - r.origin.y) / r.direction.y
-  in if t < t0 || t > t1 then #no_hit
-     else let x = r.origin.x + t*r.direction.x
-          let z = r.origin.z + t*r.direction.z
-          in if x < x0 || x > x1 || z < z0 || z > z1 then #no_hit
-             else #hit { u = (x-x0)/(x1-x0),
-                         v = (z-z0)/(z1-z0),
-                         p = point_at_parameter r t,
-                         normal = vec(0, 1, 0),
-                         t, material}
-
-type yz_rect = {y0: f32, y1: f32, z0: f32, z1: f32, k: f32,
-                material: material}
-
-let yz_rect_aabb ({y0, y1, z0, z1, k, material=_}: yz_rect) : aabb =
-  { min = vec(k-0.0001, y0, z0), max = vec(k+0.0001, y1, z1) }
-
-let yz_rect_hit (rect: yz_rect) (r: ray) (t0: f32) (t1: f32) : hit =
-  let {y0, y1, z0, z1, k, material} = rect
-  let t = (k - r.origin.x) / r.direction.x
-  in if t < t0 || t > t1 then #no_hit
-     else let y = r.origin.y + t*r.direction.y
-          let z = r.origin.z + t*r.direction.z
-          in if y < y0 || y > y1 || z < z0 || z > z1 then #no_hit
-             else #hit { u = (y-y0)/(y1-y0),
-                         v = (z-z0)/(z1-z0),
-                         p = point_at_parameter r t,
-                         normal = vec(1, 0, 0),
+                         normal = rect_cba rtype {a=0, b=0, c=1},
                          t, material}
 
 type transform = #flip | #noflip
 
 type obj = {transform: transform,
             obj: #sphere sphere
-                 | #xy_rect xy_rect
-                 | #xz_rect xz_rect
-                 | #yz_rect yz_rect}
+                 | #rect rect}
 
 let obj_mk x : obj = {obj = x, transform = #noflip }
 
@@ -257,9 +236,7 @@ let obj_flip (obj: obj) = obj with transform = #flip
 let obj_hit (obj: obj) (r: ray) (t0: f32) (t1: f32) : hit =
   let h = match obj.obj
           case #sphere s -> sphere_hit s r t0 t1
-          case #xy_rect rect -> xy_rect_hit rect r t0 t1
-          case #xz_rect rect -> xz_rect_hit rect r t0 t1
-          case #yz_rect rect -> yz_rect_hit rect r t0 t1
+          case #rect rect -> rect_hit rect r t0 t1
   in match (obj.transform, h)
      case (#flip, #hit h) ->
        #hit (h with normal = ((-1) `vec3.scale` h.normal))
@@ -270,9 +247,7 @@ type bounded = #unbounded | #bounded aabb
 let obj_aabb (t0: f32) (t1: f32) (obj: obj) : aabb =
   match obj.obj
   case #sphere s -> sphere_aabb s t0 t1
-  case #xy_rect rect -> xy_rect_aabb rect
-  case #xz_rect rect -> xz_rect_aabb rect
-  case #yz_rect rect -> yz_rect_aabb rect
+  case #rect rect -> rect_aabb rect
 
 import "bvh"
 
@@ -378,17 +353,26 @@ let color (max_depth: i32) ({textures, bvh}: scene [])
           color))
   in (rng, color)
 
+let xy_rect {x0, x1, y0, y1, k, material} =
+  obj_mk (#rect {rtype=#xy, a0=x0, a1=x1, b0=y0, b1=y1, k, material})
+
+let xz_rect {x0, x1, z0, z1, k, material} =
+  obj_mk (#rect {rtype=#xz, a0=x0, a1=x1, b0=z0, b1=z1, k, material})
+
+let yz_rect {y0, y1, z0, z1, k, material} =
+  obj_mk (#rect {rtype=#yz, a0=y0, a1=y1, b0=z0, b1=z1, k, material})
+
 let cornell_box : []obj =
   let red = #lambertian {albedo=#constant {color=vec(0.65, 0.05, 0.05)}}
   let white = #lambertian {albedo=#constant {color=vec(0.73, 0.73, 0.73)}}
   let green = #lambertian {albedo=#constant {color=vec(0.12, 0.45, 0.15)}}
   let light = #diffuse_light {emit=#constant {color=vec(15, 15, 15)}}
-  in [ obj_flip (obj_mk (#yz_rect {y0=0, y1=555, z0=0, z1=555, k=555, material=green}))
-     , obj_mk (#yz_rect {y0=0, y1=555, z0=0, z1=555, k=0, material=red})
-     , obj_mk (#xz_rect {x0=213, x1=343, z0=227, z1=332, k=554, material=light})
-     , obj_flip (obj_mk (#xz_rect {x0=0, x1=555, z0=0, z1=555, k=555, material=white}))
-     , obj_mk (#xz_rect {x0=0, x1=555, z0=0, z1=555, k=0, material=white})
-     , obj_flip (obj_mk (#xy_rect {x0=0, x1=555, y0=0, y1=555, k=555, material=white}))
+  in [ obj_flip (yz_rect {y0=0, y1=555, z0=0, z1=555, k=555, material=green})
+     , yz_rect {y0=0, y1=555, z0=0, z1=555, k=0, material=red}
+     , xz_rect {x0=213, x1=343, z0=227, z1=332, k=554, material=light}
+     , obj_flip (xz_rect {x0=0, x1=555, z0=0, z1=555, k=555, material=white})
+     , xz_rect {x0=0, x1=555, z0=0, z1=555, k=0, material=white}
+     , obj_flip (xy_rect {x0=0, x1=555, y0=0, y1=555, k=555, material=white})
      ]
 
 import "lib/github.com/athas/matte/colour"
