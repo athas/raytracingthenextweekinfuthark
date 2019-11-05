@@ -18,7 +18,7 @@ let schlick (cosine: f32) (ref_idx: f32) =
 
 import "lib/github.com/diku-dk/cpprandom/random"
 
-module rnge = xorshift128plus
+module rnge = minstd_rand
 module dist = uniform_real_distribution f32 rnge
 type rng = rnge.rng
 
@@ -101,11 +101,12 @@ let aabb_hit ({min, max}: aabb) ({origin, direction, time=_}: ray) (tmin: f32) (
 type texture = #constant {color: vec3}
              | #checkered {even: vec3, odd: vec3}
              | #noise {scale: f32}
+             | #image
 
 type texture_value = texture -> (u: f32) -> (v: f32) -> (p: vec3) -> vec3
 
-let mk_texture_value (turb: vec3 -> f32) : texture_value =
-  \(t: texture) (_u: f32) (_v: f32) (p: vec3) : vec3 ->
+let mk_texture_value [ny][nx] (turb: vec3 -> f32) (img: [ny][nx][3]u8) : texture_value =
+  \(t: texture) (u: f32) (v: f32) (p: vec3) : vec3 ->
     match t
     case #constant {color} ->
       color
@@ -114,16 +115,25 @@ let mk_texture_value (turb: vec3 -> f32) : texture_value =
       in if sines < 0 then odd else even
     case #noise {scale} ->
       vec3.scale (0.5 * (1 + f32.sin(scale * p.z + 10 * turb p))) (vec(1,1,1))
+    case #image ->
+      let i = t32 (u * r32 nx)
+      let j = t32 ((1-v) * r32 ny - 0.001)
+      let i = i32.min (i32.max i 0) (nx-1)
+      let j = i32.min (i32.max j 0) (ny-1)
+      let r = unsafe f32.u8 img[j,i,0] / 256
+      let g = unsafe f32.u8 img[j,i,1] / 256
+      let b = unsafe f32.u8 img[j,i,2] / 256
+      in vec(r,g,b)
 
 type material = #lambertian {albedo: texture}
               | #metal {albedo: vec3, fuzz: f32}
               | #dielectric {ref_idx: f32}
+              | #diffuse_light {emit: texture}
 
-type hit_info = {t: f32, p: vec3, normal: vec3, material: material}
+type hit_info = {t: f32, p: vec3, normal: vec3, material: material,
+                 u: f32, v: f32}
 
 type hit = #no_hit | #hit hit_info
-
-type bounded = #unbounded | #bounded aabb
 
 type sphere = {center0: vec3, center1: vec3,
                time0: f32, time1: f32,
@@ -136,6 +146,12 @@ let sphere_center (s: sphere) (time: f32): vec3 =
        (((time - s.time0) / (s.time1 - s.time0)) `vec3.scale`
                (s.center1 vec3.- s.center0))
 
+let sphere_uv (p: vec3) : {u: f32, v: f32} =
+  let phi = f32.atan2 p.z p.x
+  let theta = f32.asin p.y
+  in {u = 1 - (phi + f32.pi)/(2*f32.pi),
+      v = (theta + f32.pi/2) / f32.pi}
+
 let sphere_hit (s: sphere) (r: ray) (t_min: f32) (t_max: f32) : hit =
   let oc = vec3.(r.origin - sphere_center s r.time)
   let a = vec3.dot r.direction r.direction
@@ -144,12 +160,13 @@ let sphere_hit (s: sphere) (r: ray) (t_min: f32) (t_max: f32) : hit =
   let discriminant = b*b - a*c
   let try_hit (temp: f32) =
     if temp < t_max && temp > t_min
-    then (#hit { t = temp
-               , p = point_at_parameter r temp
-               , normal = (1/s.radius) `vec3.scale`
-                          (point_at_parameter r temp vec3.- sphere_center s r.time)
-               , material = s.material
-               })
+    then let p = point_at_parameter r temp
+         let {u,v} = sphere_uv p
+         in (#hit { t = temp
+                  , p = point_at_parameter r temp
+                  , normal = (1/s.radius) `vec3.scale` (p vec3.- sphere_center s r.time)
+                  , material = s.material,
+                  u, v})
     else #no_hit
   in if discriminant <= 0
      then #no_hit
@@ -168,15 +185,38 @@ let sphere_aabb (s: sphere) (t0: f32) (t1: f32) : aabb =
           let box1 = sphere_box (sphere_center s t1) s.radius
           in surrounding_box box0 box1
 
+type xy_rect = {x0: f32, x1: f32, y0: f32, y1: f32, k: f32,
+                material: material}
+
+let xy_rect_hit (rect: xy_rect) (r: ray) (t0: f32) (t1: f32) : hit =
+  let {x0, x1, y0, y1, k, material} = rect
+  let t = (k - r.origin.z) / r.direction.z
+  in if t < t0 || t > t1 then #no_hit
+     else let x = r.origin.x + t*r.direction.x
+          let y = r.origin.y + t*r.direction.y
+          in if x < x0 || x > x1 || y < y0 || y > y1 then #no_hit
+             else #hit { u = (x-x0)/(x1-x0),
+                         v = (y-y0)/(y1-y0),
+                         p = point_at_parameter r t,
+                         normal = vec(0, 0, 1),
+                         t, material}
+
+let xy_rect_aabb ({x0, x1, y0, y1, k, material=_}: xy_rect) : aabb =
+  { min = vec(x0, y0, k-0.0001), max = vec(x1, y1, k+0.0001) }
+
 type obj = #sphere sphere
+         | #xy_rect xy_rect
 
-let obj_hit (obj: obj) (r: ray) (t_min: f32) (t_max: f32) : hit =
+let obj_hit (obj: obj) (r: ray) (t0: f32) (t1: f32) : hit =
   match obj
-  case #sphere s -> sphere_hit s r t_min t_max
+  case #sphere s -> sphere_hit s r t0 t1
+  case #xy_rect rect -> xy_rect_hit rect r t0 t1
 
+type bounded = #unbounded | #bounded aabb
 let obj_aabb (t0: f32) (t1: f32) (obj: obj) : aabb =
   match obj
   case #sphere s -> sphere_aabb s t0 t1
+  case #xy_rect rect -> xy_rect_aabb rect
 
 import "bvh"
 
@@ -201,7 +241,7 @@ let scattering (texture_value: texture_value)
   case #lambertian {albedo} ->
     let (rng, bounce) = random_in_unit_sphere rng
     let target = vec3.(h.p + h.normal + bounce)
-    in (rng, #scatter {attenuation=texture_value albedo 0 0 h.p,
+    in (rng, #scatter {attenuation=texture_value albedo h.u h.v h.p,
                        scattered={origin = h.p,
                                   direction = target vec3.- h.p,
                                   time = r.time}})
@@ -228,40 +268,58 @@ let scattering (texture_value: texture_value)
       else (h.normal,
             1/ref_idx,
             -vec3.dot r.direction h.normal / vec3.norm r.direction)
-    in match refract r.direction outward_normal ni_over_nt
-       case #refract refracted ->
-         let reflect_prob = schlick cosine ref_idx
-         let (rng, x) = rand rng
-         let direction = if x < reflect_prob then reflected else refracted
-         in (rng, #scatter {attenuation, scattered={origin=h.p,
-                                                    direction,
-                                                    time=r.time}})
-       case #no_refract ->
-         (rng, #scatter {attenuation, scattered={origin=h.p,
-                                                 direction=reflected,
-                                                 time=r.time}})
+    in (match refract r.direction outward_normal ni_over_nt
+        case #refract refracted ->
+          let reflect_prob = schlick cosine ref_idx
+          let (rng, x) = rand rng
+          let direction = if x < reflect_prob then reflected else refracted
+          in (rng, #scatter {attenuation, scattered={origin=h.p,
+                                                     direction,
+                                                     time=r.time}})
+        case #no_refract ->
+          (rng, #scatter {attenuation, scattered={origin=h.p,
+                                                  direction=reflected,
+                                                  time=r.time}}))
+
+  case #diffuse_light _ ->
+    (rng, #no_scatter)
+
+let emitted (texture_value: texture_value)
+            (m: material) (u: f32) (v: f32) (p: vec3) : vec3 =
+  match m
+  case #diffuse_light {emit} ->
+    texture_value emit u v p
+  case _ ->
+    vec(0, 0, 0)
 
 type scene [n] = {textures: texture_value,
                   bvh: bvh [n]}
 
 let color (max_depth: i32) ({textures, bvh}: scene [])
           (r: ray) (rng: rng) : (rng, vec3) =
-  let ((rng, _), (_, color)) =
-    loop ((rng, r), (depth, color)) = ((rng, r), (0, vec(1,1,1))) while depth < max_depth
-    do match bvh_hit bvh r 0.00001 f32.highest
-       case #hit h ->
-         (match scattering textures r h rng
-          case (rng, #scatter {attenuation, scattered}) ->
-            ((rng, scattered), (depth+1, attenuation vec3.* color))
-          case (rng, #no_scatter) ->
-            ((rng, r), (max_depth, vec(0,0,0))))
-       case #no_hit ->
-         let unit_direction = vec3.normalise r.direction
-         let t = 0.5 * (unit_direction.y + 1)
-         let color' = color vec3.*
-                      (((1-t) `vec3.scale` vec(1, 1, 1)) vec3.+
-                       (t `vec3.scale` vec(0.5, 0.7, 1.0)))
-         in ((rng, r), (max_depth, color'))
+  let ((rng, _), (_, _, color)) =
+    loop
+      ((rng, r), (depth, light, color)) =
+      ((rng, r), (0, vec(1,1,1), vec(0,0,0))) while depth < max_depth do
+      match bvh_hit bvh r 0.00001 f32.highest
+      case #hit h ->
+        (let emitted = emitted textures h.material h.u h.v h.p
+         in match scattering textures r h rng
+            case (rng, #scatter {attenuation, scattered}) ->
+              ((rng, scattered),
+               (depth+1,
+                light vec3.* attenuation,
+                light vec3.* emitted vec3.+ color))
+            case (rng, #no_scatter) ->
+              ((rng, r),
+               (max_depth,
+                light,
+                light vec3.* emitted vec3.+ color)))
+      case #no_hit ->
+        ((rng, r),
+         (max_depth,
+          light,
+          color))
   in (rng, color)
 
 let random_object_at (a: f32) (b: f32) (rng: rng) : (rng, obj) =
@@ -306,13 +364,13 @@ let random_world (seed: i32) (n: i32) =
   let fixed_objs =
     [ sphere {center=vec(0,-1000,0),
               radius=1000,
-              material=#lambertian {albedo=#noise {scale=10}}}
+              material=#lambertian {albedo=#noise {scale=5}}}
     , sphere {center=vec(0,1,0),
               radius=1,
               material=#dielectric {ref_idx=1.5}}
     , sphere {center=vec(-4,1,0),
               radius=1,
-              material=#lambertian {albedo=#noise {scale=10}}}
+              material=#lambertian {albedo=#image}}
     , sphere {center=vec(4,1,0),
               radius=1,
               material=#metal {albedo=vec(0.6,0.6,0.5), fuzz=0}}
@@ -321,6 +379,27 @@ let random_world (seed: i32) (n: i32) =
   let world = flatten objs ++ fixed_objs
 
   in (rng, world)
+
+let light_world : []obj =
+  let sphere {center, radius, material} : obj =
+    #sphere { center0 = center, center1 = center,
+              time0 = 0, time1 = 0,
+              radius, material }
+  in [ sphere {center=vec(0,-1000,0),
+               radius=1000,
+               material=#lambertian {albedo=#noise {scale=5}}},
+       sphere {center=vec(0,2,0),
+               radius=2,
+               material=#lambertian {albedo=#noise {scale=15}}},
+       sphere {center=vec(-2,2,0),
+               radius=2,
+               material=#metal {albedo=vec(0.6,0.6,0.5), fuzz=0}},
+       sphere {center=vec(0,7,0),
+               radius=3,
+               material=#diffuse_light {emit=#constant {color=vec(4,4,4)}}},
+       #xy_rect { x0=3, x1=5, y0=2, y1=4, k = -2,
+                  material=#diffuse_light {emit=#constant {color=vec(4,4,4)}}}
+     ]
 
 import "lib/github.com/athas/matte/colour"
 
@@ -351,17 +430,18 @@ let render (max_depth: i32) (nx: i32) (ny: i32) (ns: i32) (scene: scene []) (cam
 import "perlin"
 module perlin = mk_perlin rnge
 
-let main (nx: i32) (ny: i32) (ns: i32) (nobj: i32): [ny][nx]argb.colour =
-  let lookfrom = vec(13,2,3)
-  let lookat = vec(0,0,0)
+let main (nx: i32) (ny: i32) (ns: i32) (nobj: i32) (img: [][][3]u8): [ny][nx]argb.colour =
+  let lookfrom = 2 `vec3.scale` vec(13,2,3)
+  let lookat = vec(0,2,0)
   let dist_to_focus = 10
   let aperture = 0
   let cam = camera lookfrom lookat (vec(0,1,0)) 20 (r32 nx / r32 ny)
                    aperture dist_to_focus 0 1
   let (rng, world) = random_world (nx ^ ny ^ ns) nobj
+  let world = light_world
   let bvh = bvh_mk (obj_aabb  cam.time0 cam.time1) world
   let (rng, p) = perlin.mk_perlin rng 256
-  let textures = mk_texture_value (perlin.turb p 7)
+  let textures = mk_texture_value (perlin.turb p 7) img
   let scene = {bvh, textures}
   let rngs = rnge.split_rng (nx*ny) rng |> unflatten ny nx
   let max_depth = 50
