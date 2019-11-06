@@ -135,6 +135,25 @@ type hit_info = {t: f32, p: vec3, normal: vec3, material: material,
 
 type hit = #no_hit | #hit hit_info
 
+type transform = {flip: #flip | #noflip,
+                  translate: vec3}
+
+let transform_id : transform =
+  {flip = #noflip, translate = vec(0, 0, 0)}
+
+let transform_hit (t: transform) (h: hit) : hit =
+  match h
+  case #hit h ->
+    #hit (h with normal = (match t.flip
+                           case #flip -> (-1) `vec3.scale` h.normal
+                           case #noflip -> h.normal)
+            with p = h.p vec3.+ t.translate)
+  case _ ->
+    h
+
+let transform_ray (t: transform) (r: ray) : ray =
+  r with origin = r.origin vec3.- t.translate
+
 type sphere = {center0: vec3, center1: vec3,
                time0: f32, time1: f32,
                radius: f32, material: material}
@@ -223,31 +242,30 @@ let rect_hit (rect: rect) (r: ray) (t0: f32) (t1: f32) : hit =
                          normal = rect_cba rtype {a=0, b=0, c=1},
                          t, material}
 
-type transform = #flip | #noflip
-
 type obj = {transform: transform,
-            obj: #sphere sphere
-                 | #rect rect}
+            obj: #sphere sphere | #rect rect}
 
-let obj_mk x : obj = {obj = x, transform = #noflip }
+let obj_mk x : obj = {obj = x, transform = transform_id }
 
-let obj_flip (obj: obj) = obj with transform = #flip
+let obj_flip (obj: obj) = obj with transform.flip = #flip
+
+let obj_translate (v: vec3) (obj: obj) : obj =
+  obj with transform.translate = obj.transform.translate vec3.+ v
 
 let obj_hit (obj: obj) (r: ray) (t0: f32) (t1: f32) : hit =
+  let r = transform_ray obj.transform r
   let h = match obj.obj
           case #sphere s -> sphere_hit s r t0 t1
           case #rect rect -> rect_hit rect r t0 t1
-  in match (obj.transform, h)
-     case (#flip, #hit h) ->
-       #hit (h with normal = ((-1) `vec3.scale` h.normal))
-     case _ ->
-       h
+  in transform_hit obj.transform h
 
 type bounded = #unbounded | #bounded aabb
 let obj_aabb (t0: f32) (t1: f32) (obj: obj) : aabb =
-  match obj.obj
-  case #sphere s -> sphere_aabb s t0 t1
-  case #rect rect -> rect_aabb rect
+  let {min, max} = match obj.obj
+                   case #sphere s -> sphere_aabb s t0 t1
+                   case #rect rect -> rect_aabb rect
+  in {min = min vec3.+ obj.transform.translate,
+      max = max vec3.+ obj.transform.translate}
 
 import "bvh"
 
@@ -362,6 +380,17 @@ let xz_rect {x0, x1, z0, z1, k, material} =
 let yz_rect {y0, y1, z0, z1, k, material} =
   obj_mk (#rect {rtype=#yz, a0=y0, a1=y1, b0=z0, b1=z1, k, material})
 
+let box {p0={x=x0, y=y0, z=z0}, p1={x=x1, y=y1, z=z1}, material} =
+  let a k = xy_rect {x0, x1, y0, y1, k, material}
+  let b k = xz_rect {x0, x1, z0, z1, k, material}
+  let c k = yz_rect {y0, y1, z0, z1, k, material}
+  in [a z1,
+      obj_flip (a z0),
+      b y1,
+      obj_flip (b y0),
+      c x1,
+      obj_flip (c x0)]
+
 let cornell_box : []obj =
   let red = #lambertian {albedo=#constant {color=vec(0.65, 0.05, 0.05)}}
   let white = #lambertian {albedo=#constant {color=vec(0.73, 0.73, 0.73)}}
@@ -374,6 +403,10 @@ let cornell_box : []obj =
      , xz_rect {x0=0, x1=555, z0=0, z1=555, k=0, material=white}
      , obj_flip (xy_rect {x0=0, x1=555, y0=0, y1=555, k=555, material=white})
      ]
+     ++ map (obj_translate (vec(130, 0, 65)))
+            (box {p0=vec(0, 0, 0), p1=vec(165, 165, 165), material=white})
+     ++ map (obj_translate (vec(265, 0, 295)))
+            (box {p0=vec(0, 0, 0), p1=vec(165, 330, 165), material=white})
 
 import "lib/github.com/athas/matte/colour"
 
