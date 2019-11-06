@@ -136,23 +136,52 @@ type hit_info = {t: f32, p: vec3, normal: vec3, material: material,
 type hit = #no_hit | #hit hit_info
 
 type transform = {flip: #flip | #noflip,
-                  translate: vec3}
+                  rot_y: f32,
+                  move: vec3}
 
 let transform_id : transform =
-  {flip = #noflip, translate = vec(0, 0, 0)}
+  {flip = #noflip,
+   rot_y = 0,
+   move = vec(0, 0, 0)}
 
 let transform_hit (t: transform) (h: hit) : hit =
   match h
   case #hit h ->
-    #hit (h with normal = (match t.flip
-                           case #flip -> (-1) `vec3.scale` h.normal
-                           case #noflip -> h.normal)
-            with p = h.p vec3.+ t.translate)
+    let h =
+      if t.rot_y == 0 then h
+      else let cos_theta = f32.cos t.rot_y
+           let sin_theta = f32.sin t.rot_y
+           let p = h.p with x = cos_theta*h.p.x +
+                                sin_theta*h.p.z
+                       with z = -sin_theta*h.p.x +
+                                cos_theta*h.p.z
+           let normal = h.normal with x = cos_theta*h.normal.x +
+                                          sin_theta*h.normal.z
+                                 with z = -sin_theta*h.normal.x +
+                                          cos_theta*h.normal.z
+           in h with p = p with normal = normal
+    in #hit (h with normal = (match t.flip
+                              case #flip -> (-1) `vec3.scale` h.normal
+                              case #noflip -> h.normal)
+               with p = h.p vec3.+ t.move)
   case _ ->
     h
 
 let transform_ray (t: transform) (r: ray) : ray =
-  r with origin = r.origin vec3.- t.translate
+  let r = r with origin = r.origin vec3.- t.move
+  in if t.rot_y == 0 then r
+     else
+     let cos_theta = f32.cos t.rot_y
+     let sin_theta = f32.sin t.rot_y
+     let origin = r.origin with x = cos_theta * r.origin.x -
+                                    sin_theta * r.origin.z
+                           with z = sin_theta * r.origin.x +
+                                    cos_theta * r.origin.z
+     let direction = r.direction with x = cos_theta*r.direction.x -
+                                          sin_theta*r.direction.z
+                                 with z = sin_theta*r.direction.x +
+                                          cos_theta*r.direction.z
+     in {origin, direction, time = r.time}
 
 type sphere = {center1: vec3,
                time0: f32, time1: f32,
@@ -222,7 +251,7 @@ let rect_cba (rtype: rect_type) {a: f32, b: f32, c: f32} : vec3 =
 
 let rect_aabb (rect: rect) : aabb =
   let {rtype, a1, b1, k, material=_} = rect
-  in { min = rect_cba rtype {a=0, b=0, c=k-0.0001},
+  in { min = rect_cba rtype {a=0, b=0, c= -0.0001},
        max = rect_cba rtype {a=a1, b=b1, c=k+0.0001} }
 
 let rect_hit (rect: rect) (r: ray) (t0: f32) (t1: f32) : hit =
@@ -247,8 +276,11 @@ let obj_mk x : obj = {obj = x, transform = transform_id }
 
 let obj_flip (obj: obj) = obj with transform.flip = #flip
 
-let obj_translate (v: vec3) (obj: obj) : obj =
-  obj with transform.translate = obj.transform.translate vec3.+ v
+let obj_move (v: vec3) (obj: obj) : obj =
+  obj with transform.move = obj.transform.move vec3.+ v
+
+let obj_rot_y (angle: f32) (obj: obj) : obj =
+  obj with transform.rot_y = obj.transform.rot_y + (f32.pi / 180) * angle
 
 let obj_hit (obj: obj) (r: ray) (t0: f32) (t1: f32) : hit =
   let r = transform_ray obj.transform r
@@ -262,8 +294,12 @@ let obj_aabb (t0: f32) (t1: f32) (obj: obj) : aabb =
   let {min, max} = match obj.obj
                    case #sphere s -> sphere_aabb s t0 t1
                    case #rect rect -> rect_aabb rect
-  in {min = min vec3.+ obj.transform.translate,
-      max = max vec3.+ obj.transform.translate}
+  let {min, max} = if obj.transform.rot_y == 0
+                   then {min, max}
+                   else aabb_rot_y obj.transform.rot_y {min, max}
+  let min = min vec3.+ obj.transform.move
+  let max = max vec3.+ obj.transform.move
+  in {min, max}
 
 import "bvh"
 
@@ -389,23 +425,24 @@ let box {p={x, y, z}, material} =
       c x,
       obj_flip (c 0)]
 
-let cornell_box : []obj =
+let fancybox : []obj =
   let red = #lambertian {albedo=#constant {color=vec(0.65, 0.05, 0.05)}}
   let white = #lambertian {albedo=#constant {color=vec(0.73, 0.73, 0.73)}}
   let green = #lambertian {albedo=#constant {color=vec(0.12, 0.45, 0.15)}}
   let light = #diffuse_light {emit=#constant {color=vec(15, 15, 15)}}
   in [ obj_flip (yz_rect {y=555, z=555, k=555, material=green})
      , yz_rect {y=555, z=555, k=0, material=red}
-     , obj_translate (vec(213, 0, 227))
-                     (xz_rect {x=130, z=105, k=554, material=light})
+     , obj_move (vec(0, 555, 227))
+                (obj_mk (#sphere {center1=vec(555, 0, 0), time0=0, time1=1, radius=50,
+                                  material=light}))
      , obj_flip (xz_rect {x=555, z=555, k=555, material=white})
      , xz_rect {x=555, z=555, k=0, material=white}
      , obj_flip (xy_rect {x=555, y=555, k=555, material=white})
      ]
-     ++ map (obj_translate (vec(130, 0, 65)))
-            (box {p=vec(165, 165, 165), material=white})
-     ++ map (obj_translate (vec(265, 0, 295)))
-            (box {p=vec(165, 330, 165), material=white})
+     ++ map (obj_rot_y (-18) >-> obj_move (vec(130, 0, 65)))
+            (box {p=vec(165, 165, 165), material=#dielectric {ref_idx=1.5}})
+     ++ map (obj_rot_y 15 >-> obj_move (vec(265, 0, 295)))
+            (box {p=vec(165, 330, 165), material=#metal {albedo=vec(0.6,0.6,0.5), fuzz=0}})
 
 import "lib/github.com/athas/matte/colour"
 
@@ -445,8 +482,8 @@ let main (nx: i32) (ny: i32) (ns: i32) (img: [][][3]u8): [ny][nx]argb.colour =
   let cam = camera lookfrom lookat (vec(0,1,0)) vfov (r32 nx / r32 ny)
                    aperture dist_to_focus 0 1
   let rng = rnge.rng_from_seed [nx, ny, ns]
-  let world = cornell_box
-  let bvh = bvh_mk (obj_aabb  cam.time0 cam.time1) world
+  let world = fancybox
+  let bvh = bvh_mk (obj_aabb cam.time0 cam.time1) world
   let (rng, p) = perlin.mk_perlin rng 256
   let textures = mk_texture_value (perlin.turb p 7) img
   let scene = {bvh, textures}
