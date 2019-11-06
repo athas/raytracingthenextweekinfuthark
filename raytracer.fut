@@ -129,6 +129,7 @@ type material = #lambertian {albedo: texture}
               | #metal {albedo: vec3, fuzz: f32}
               | #dielectric {ref_idx: f32}
               | #diffuse_light {emit: texture}
+              | #isotropic {albedo: texture}
 
 type hit_info = {t: f32, p: vec3, normal: vec3, material: material,
                  u: f32, v: f32}
@@ -270,9 +271,14 @@ let rect_hit (rect: rect) (r: ray) (t0: f32) (t1: f32) : hit =
                          t, material}
 
 type obj = {transform: transform,
+            density: f32, -- non-nan if medium.
             obj: #sphere sphere | #rect rect}
 
-let obj_mk x : obj = {obj = x, transform = transform_id }
+let obj_mk x : obj =
+  {obj = x, density = f32.nan, transform = transform_id }
+
+let obj_medium density (obj: obj) =
+  obj with density = density
 
 let obj_flip (obj: obj) = obj with transform.flip = #flip
 
@@ -282,12 +288,40 @@ let obj_move (v: vec3) (obj: obj) : obj =
 let obj_rot_y (angle: f32) (obj: obj) : obj =
   obj with transform.rot_y = obj.transform.rot_y + (f32.pi / 180) * angle
 
-let obj_hit (obj: obj) (r: ray) (t0: f32) (t1: f32) : hit =
+let obj_hit (obj: obj) (r: ray) (t0: f32) (t1: f32) (rng: rng) : (rng, hit) =
   let r = transform_ray obj.transform r
-  let h = match obj.obj
-          case #sphere s -> sphere_hit s r t0 t1
-          case #rect rect -> rect_hit rect r t0 t1
-  in transform_hit obj.transform h
+  let dohit t0 t1 =
+    match obj.obj
+    case #sphere s -> sphere_hit s r t0 t1
+    case #rect rect -> rect_hit rect r t0 t1
+
+  let (rng, h) =
+    if f32.isnan obj.density
+    then (rng, dohit t0 t1)
+    else match dohit f32.lowest f32.highest
+         case #no_hit -> (rng, #no_hit)
+         case #hit h1 ->
+           match dohit (h1.t + 0.0001) f32.highest
+           case #no_hit -> (rng, #no_hit)
+           case #hit h2 ->
+             let h1 = h1 with t = f32.max t0 h1.t
+             let h2 = h2 with t = f32.min t1 h2.t
+             in if h1.t >= h2.t then (rng, #no_hit)
+                else let h1 = h1 with t = f32.max 0 h1.t
+                     let len = vec3.norm r.direction
+                     let distance_inside_boundary =
+                       (h2.t - h1.t) * len
+                     let (rng, prob) = rand rng
+                     let hit_distance = -(1/obj.density)*f32.log(prob)
+                     in if hit_distance < distance_inside_boundary
+                        then let t = h1.t + hit_distance / len
+                             in (rng,
+                                 #hit (h1 with t = t
+                                          with p = point_at_parameter r t
+                                          with normal = vec(1,0,0)))
+                        else (rng, #no_hit)
+
+  in (rng, transform_hit obj.transform h)
 
 type bounded = #unbounded | #bounded aabb
 let obj_aabb (t0: f32) (t1: f32) (obj: obj) : aabb =
@@ -305,13 +339,13 @@ import "bvh"
 
 type bvh [n] = bvh [n] obj
 
-let bvh_hit [n] (bvh: bvh [n]) (r: ray) (t_min: f32) (t_max: f32) : hit =
+let bvh_hit [n] (bvh: bvh [n]) (r: ray) (t_min: f32) (t_max: f32) (rng: rng) : (rng, hit) =
   let contains aabb = aabb_hit aabb r t_min t_max
-  let closest_hit (hit, t_max) obj =
-    match obj_hit obj r t_min t_max
-    case #no_hit -> (hit, t_max)
-    case #hit h -> (#hit h, h.t)
-  in bvh_fold contains closest_hit (#no_hit, t_max) bvh
+  let closest_hit ((rng, hit), t_max) obj =
+    match obj_hit obj r t_min t_max rng
+    case (rng, #no_hit) -> ((rng, hit), t_max)
+    case (rng, #hit h) -> ((rng, #hit h), h.t)
+  in bvh_fold contains closest_hit ((rng, #no_hit), t_max) bvh
      |> (.1)
 
 type scatter = #scatter {attenuation: vec3, scattered: ray}
@@ -320,6 +354,9 @@ type scatter = #scatter {attenuation: vec3, scattered: ray}
 let scattering (texture_value: texture_value)
                (r: ray) (h: hit_info) (rng: rng) : (rng, scatter) =
   match h.material
+
+  case #diffuse_light _ ->
+    (rng, #no_scatter)
 
   case #lambertian {albedo} ->
     let (rng, bounce) = random_in_unit_sphere rng
@@ -364,8 +401,13 @@ let scattering (texture_value: texture_value)
                                                   direction=reflected,
                                                   time=r.time}}))
 
-  case #diffuse_light _ ->
-    (rng, #no_scatter)
+  case #isotropic {albedo} ->
+    let (rng, bounce) = random_in_unit_sphere rng
+    let scattered = {origin = h.p,
+                     direction = bounce,
+                     time = r.time}
+    in (rng, #scatter {attenuation=texture_value albedo h.u h.v h.p,
+                       scattered})
 
 let emitted (texture_value: texture_value)
             (m: material) (u: f32) (v: f32) (p: vec3) : vec3 =
@@ -384,8 +426,8 @@ let color (max_depth: i32) ({textures, bvh}: scene [])
     loop
       ((rng, r), (depth, light, color)) =
       ((rng, r), (0, vec(1,1,1), vec(0,0,0))) while depth < max_depth do
-      match bvh_hit bvh r 0.001 f32.highest
-      case #hit h ->
+      match bvh_hit bvh r 0.001 f32.highest rng
+      case (rng, #hit h) ->
         (let emitted = emitted textures h.material h.u h.v h.p
          in match scattering textures r h rng
             case (rng, #scatter {attenuation, scattered}) ->
@@ -398,7 +440,7 @@ let color (max_depth: i32) ({textures, bvh}: scene [])
                (max_depth,
                 light,
                 light vec3.* emitted vec3.+ color)))
-      case #no_hit ->
+      case (rng, #no_hit) ->
         ((rng, r),
          (max_depth,
           light,
@@ -429,20 +471,20 @@ let fancybox : []obj =
   let red = #lambertian {albedo=#constant {color=vec(0.65, 0.05, 0.05)}}
   let white = #lambertian {albedo=#constant {color=vec(0.73, 0.73, 0.73)}}
   let green = #lambertian {albedo=#constant {color=vec(0.12, 0.45, 0.15)}}
-  let light = #diffuse_light {emit=#constant {color=vec(15, 15, 15)}}
+  let light = #diffuse_light {emit=#constant {color=vec(7, 7, 7)}}
   in [ obj_flip (yz_rect {y=555, z=555, k=555, material=green})
      , yz_rect {y=555, z=555, k=0, material=red}
-     , obj_move (vec(0, 555, 227))
-                (obj_mk (#sphere {center1=vec(555, 0, 0), time0=0, time1=1, radius=50,
-                                  material=light}))
+     , obj_move (vec(113, 554, 127))
+                (xz_rect {x=330, z=305, k=0, material=light})
      , obj_flip (xz_rect {x=555, z=555, k=555, material=white})
      , xz_rect {x=555, z=555, k=0, material=white}
      , obj_flip (xy_rect {x=555, y=555, k=555, material=white})
-     ]
-     ++ map (obj_rot_y (-18) >-> obj_move (vec(130, 0, 65)))
-            (box {p=vec(165, 165, 165), material=#dielectric {ref_idx=1.5}})
-     ++ map (obj_rot_y 15 >-> obj_move (vec(265, 0, 295)))
-            (box {p=vec(165, 330, 165), material=#metal {albedo=vec(0.6,0.6,0.5), fuzz=0}})
+     ] ++
+     [(obj_move (vec(130, 25, 65)) >-> obj_medium 0.01)
+      (obj_mk (#sphere {center1=vec(0, 0, 0), time0=0, time1=0, radius=50, material=#lambertian {albedo=#constant {color=vec(1,1,1)}}})),
+
+      (obj_move (vec(165, 50, 295)) >-> obj_medium 0.01)
+      (obj_mk (#sphere {center1=vec(0, 0, 0), time0=0, time1=0, radius=100, material=#lambertian {albedo=#constant {color=vec(0,0,0)}}}))]
 
 import "lib/github.com/athas/matte/colour"
 
