@@ -97,7 +97,8 @@ let aabb_hit ({min, max}: aabb) ({origin, direction, time=_}: ray) (tmin: f32) (
                   in !(tmax <= tmin)
 
 -- Our checkered textures are not as expressive as in the C++
--- implementation (no recursion).
+-- implementation (no recursion).  Also, the noise and image must be
+-- initialised separately.
 type texture = #constant {color: vec3}
              | #checkered {even: vec3, odd: vec3}
              | #noise {scale: f32}
@@ -114,7 +115,8 @@ let mk_texture_value [ny][nx] (turb: vec3 -> f32) (img: [ny][nx][3]u8) : texture
       let sines = f32.sin(10*p.x) * f32.sin(10*p.y) * f32.sin(10*p.z)
       in if sines < 0 then odd else even
     case #noise {scale} ->
-      vec3.scale (0.5 * (1 + f32.sin(scale * p.z + 10 * turb p))) (vec(1,1,1))
+      vec3.scale (0.5 * (1 + f32.sin(scale * p.x + 5 * turb (scale `vec3.scale` p))))
+                 (vec(1,1,1))
     case #image ->
       let i = t32 (u * r32 nx)
       let j = t32 ((1-v) * r32 ny - 0.001)
@@ -200,7 +202,8 @@ let sphere_uv (p: vec3) : {u: f32, v: f32} =
       v = (theta + f32.pi/2) / f32.pi}
 
 let sphere_hit (s: sphere) (r: ray) (t_min: f32) (t_max: f32) : hit =
-  let oc = vec3.(r.origin - sphere_center s r.time)
+  let center = sphere_center s r.time
+  let oc = vec3.(r.origin - center)
   let a = vec3.dot r.direction r.direction
   let b = vec3.dot oc r.direction
   let c = vec3.dot oc oc - s.radius*s.radius
@@ -208,10 +211,11 @@ let sphere_hit (s: sphere) (r: ray) (t_min: f32) (t_max: f32) : hit =
   let try_hit (temp: f32) =
     if temp < t_max && temp > t_min
     then let p = point_at_parameter r temp
-         let {u,v} = sphere_uv p
+         let normal = (1/s.radius) `vec3.scale` (p vec3.- center)
+         let {u,v} = sphere_uv normal
          in (#hit { t = temp
                   , p = point_at_parameter r temp
-                  , normal = (1/s.radius) `vec3.scale` (p vec3.- sphere_center s r.time)
+                  , normal
                   , material = s.material,
                   u, v})
     else #no_hit
@@ -467,24 +471,75 @@ let box {p={x, y, z}, material} =
       c x,
       obj_flip (c 0)]
 
-let fancybox : []obj =
-  let red = #lambertian {albedo=#constant {color=vec(0.65, 0.05, 0.05)}}
-  let white = #lambertian {albedo=#constant {color=vec(0.73, 0.73, 0.73)}}
-  let green = #lambertian {albedo=#constant {color=vec(0.12, 0.45, 0.15)}}
-  let light = #diffuse_light {emit=#constant {color=vec(7, 7, 7)}}
-  in [ obj_flip (yz_rect {y=555, z=555, k=555, material=green})
-     , yz_rect {y=555, z=555, k=0, material=red}
-     , obj_move (vec(113, 554, 127))
-                (xz_rect {x=330, z=305, k=0, material=light})
-     , obj_flip (xz_rect {x=555, z=555, k=555, material=white})
-     , xz_rect {x=555, z=555, k=0, material=white}
-     , obj_flip (xy_rect {x=555, y=555, k=555, material=white})
-     ] ++
-     [(obj_move (vec(130, 25, 65)) >-> obj_medium 0.01)
-      (obj_mk (#sphere {center1=vec(0, 0, 0), time0=0, time1=0, radius=50, material=#lambertian {albedo=#constant {color=vec(1,1,1)}}})),
+let floor_tiles (rng: rng) (nb: i32) (material: material) : (rng, []obj) =
+  let rngs = rnge.split_rng (nb*nb) rng |> unflatten nb nb
+  let tile i j =
+    let rng = rngs[i,j]
+    let w = 100
+    let xd = -1000 + r32 i*w
+    let zd = -1000 + r32 j*w
+    let (rng, f) = rand rng
+    in (rng, map (obj_move (vec(xd,0,zd)))
+                 (box {p={x=w, y=100 * (f+0.1), z=w}, material}))
+  let (rngs, boxes) = tabulate_2d nb nb tile |> flatten |> unzip
+  in (rnge.join_rng rngs, flatten boxes)
 
-      (obj_move (vec(165, 50, 295)) >-> obj_medium 0.01)
-      (obj_mk (#sphere {center1=vec(0, 0, 0), time0=0, time1=0, radius=100, material=#lambertian {albedo=#constant {color=vec(0,0,0)}}}))]
+let sphere_box (rng: rng) (ns: i32) (material: material) : (rng, []obj) =
+  let rngs = rnge.split_rng ns rng
+  let sphere j =
+    let rng = rngs[j]
+    let (rng, x) = rand rng
+    let (rng, y) = rand rng
+    let (rng, z) = rand rng
+    in (rng,
+        obj_mk (#sphere {center1=vec(0,0,0), time0=0, time1=0, radius=10, material})
+        |> obj_move (vec(165*x, 165*y, 165*z)))
+  let (rngs, spheres) = tabulate ns sphere |> unzip
+  in (rnge.join_rng rngs, spheres)
+
+let final (rng: rng) : (rng, []obj) =
+  let constant (r,g,b) = #lambertian {albedo=#constant {color=vec(r, g, b)}}
+  let white = constant (0.73, 0.73, 0.73)
+  let ground = constant (0.48, 0.83, 0.53)
+  let (rng, floor) = floor_tiles rng 20 ground
+  let light = #diffuse_light {emit=#constant {color=vec(7, 7, 7)}}
+  let sphere {radius, material} =
+    obj_mk (#sphere {center1=vec(30, 0, 0), time0=0, time1=0, radius, material})
+  let (rng, spheres) = sphere_box rng 1000 white
+  in (rng,
+      floor ++
+      [xz_rect {x=300, z=265, k=0, material=light}
+       |> obj_move (vec(123, 554, 147)),
+
+       obj_mk (#sphere {center1=vec(30, 0, 0), time0=0, time1=1, radius=50,
+                        material=constant(0.7, 0.3, 0.1)})
+       |> obj_move (vec(400, 400, 200)),
+
+       sphere {radius=50, material=#dielectric {ref_idx=1.5}}
+       |> obj_move (vec(260, 150, 45)),
+
+       sphere {radius=50, material=#metal {albedo=vec(0.8,0.8,0.9), fuzz=10}}
+       |> obj_move (vec(0, 150, 145)),
+
+       sphere {radius=70, material=#dielectric {ref_idx=1.5}}
+       |> obj_move (vec(360, 150, 145)),
+
+       sphere {radius=70, material=constant(0.2,0.4,0.9)}
+       |> obj_move (vec(360, 150, 145))
+       |> obj_medium 0.2,
+
+       sphere {radius=5000, material=constant(1,1,1)}
+       |> obj_medium 0.0001,
+
+       sphere {radius=100, material=#lambertian {albedo=#image}}
+       |> obj_move (vec(400, 200, 400)),
+
+       sphere {radius=80, material=#lambertian {albedo=#noise {scale=0.1}}}
+       |> obj_move (vec(220, 280, 300))
+
+      ] ++
+      map (obj_rot_y 15 >-> obj_move (vec(-100, 270, 395))) spheres
+     )
 
 import "lib/github.com/athas/matte/colour"
 
@@ -516,7 +571,7 @@ import "perlin"
 module perlin = mk_perlin rnge
 
 let main (nx: i32) (ny: i32) (ns: i32) (img: [][][3]u8): [ny][nx]argb.colour =
-  let lookfrom = vec(278,278,-800)
+  let lookfrom = vec(478,278,-600)
   let lookat = vec(278,278,0)
   let dist_to_focus = 10
   let aperture = 0
@@ -524,11 +579,12 @@ let main (nx: i32) (ny: i32) (ns: i32) (img: [][][3]u8): [ny][nx]argb.colour =
   let cam = camera lookfrom lookat (vec(0,1,0)) vfov (r32 nx / r32 ny)
                    aperture dist_to_focus 0 1
   let rng = rnge.rng_from_seed [nx, ny, ns]
-  let world = fancybox
+  let (rng, world) = final rng
   let bvh = bvh_mk (obj_aabb cam.time0 cam.time1) world
   let (rng, p) = perlin.mk_perlin rng 256
   let textures = mk_texture_value (perlin.turb p 7) img
   let scene = {bvh, textures}
   let rngs = rnge.split_rng (nx*ny) rng |> unflatten ny nx
   let max_depth = 50
-  in render max_depth nx ny ns scene cam rngs
+  let image = render max_depth nx ny ns scene cam rngs
+  in image
