@@ -81,16 +81,18 @@ let bvh_fold [n] 'a 'b (contains: aabb -> bool) (op: b -> a -> b) (init: b) (t: 
   let node = unsafe t.I[cur]
   let from_left = prev == node.left
   let from_right = prev == node.right
-  let on_node ptr =
-    match ptr
-    case #inner i -> (acc, i, #inner cur)
-    case #leaf i -> (op acc (unsafe t.L[i]), cur, ptr)
-  in if from_left -- Did we return from left node?
-     then on_node node.right
-     else if from_right -- Did we return from right node?
-     then (acc, node.parent, #inner cur)
-     else if contains node.aabb -- First encounter; are we in this BB?
-     then on_node node.left
-     else
-       -- All of this nodes' children are uninteresting.
+  let rec_child : #rec ptr | #norec =
+    -- Did we return from left node?
+    if from_left
+    then #rec node.right
+    -- First encounter and in this BB?
+    else if !from_right && contains node.aabb
+    then #rec node.left
+    else #norec
+  in match rec_child
+     case #norec ->
        (acc, node.parent, #inner cur)
+     case #rec ptr ->
+       match ptr
+       case #inner i -> (acc, i, #inner cur)
+       case #leaf i -> (op acc (unsafe t.L[i]), cur, ptr)
