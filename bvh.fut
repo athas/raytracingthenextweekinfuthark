@@ -27,22 +27,6 @@ type inner = {aabb: aabb, left:ptr, right:ptr, parent:i32}
 
 type bvh [n] 't = {L: [n]t, I: []inner}
 
-
-let mortons [n] 't (bbf: t -> aabb) (ts: [n]t) =
-  let centers = map (bbf >-> aabb_center) ts
-  let x_max = f32.maximum (map (.x) centers)
-  let y_max = f32.maximum (map (.y) centers)
-  let z_max = f32.maximum (map (.z) centers)
-  let x_min = f32.minimum (map (.x) centers)
-  let y_min = f32.minimum (map (.y) centers)
-  let z_min = f32.minimum (map (.z) centers)
-  let normalize {x,y,z} = {x=(x-x_min)/(x_max-x_min),
-                           y=(y-y_min)/(y_max-y_min),
-                           z=(z-z_min)/(z_max-z_min)}
-  let morton = bbf >-> aabb_center >-> normalize >-> morton_3D
-  let ts = radix_sort_by_key morton u32.num_bits u32.get_bit ts
-  in map morton ts
-
 let bvh_mk [n] 't (bbf: t -> aabb) (ts: [n]t) : bvh [n] t =
   let centers = map (bbf >-> aabb_center) ts
   let x_max = f32.maximum (map (.x) centers)

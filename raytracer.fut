@@ -299,10 +299,18 @@ let obj_hit (obj: obj) (r: ray) (t0: f32) (t1: f32) (rng: rng) : (rng, hit) =
     case #sphere s -> sphere_hit s r t0 t1
     case #rect rect -> rect_hit rect r t0 t1
 
+  -- Control flow a little convoluted here to avoid divergence.
+  let (t0', t1') =
+    if f32.isnan obj.density
+    then (t0, t1)
+    else (f32.lowest, f32.highest)
+
+  let h = dohit t0' t1'
+
   let (rng, h) =
     if f32.isnan obj.density
-    then (rng, dohit t0 t1)
-    else match dohit f32.lowest f32.highest
+    then (rng, h)
+    else match h
          case #no_hit -> (rng, #no_hit)
          case #hit h1 ->
            match dohit (h1.t + 0.0001) f32.highest
@@ -327,7 +335,6 @@ let obj_hit (obj: obj) (r: ray) (t0: f32) (t1: f32) (rng: rng) : (rng, hit) =
 
   in (rng, transform_hit obj.transform h)
 
-type bounded = #unbounded | #bounded aabb
 let obj_aabb (t0: f32) (t1: f32) (obj: obj) : aabb =
   let {min, max} = match obj.obj
                    case #sphere s -> sphere_aabb s t0 t1
@@ -563,9 +570,6 @@ let render (max_depth: i32) (nx: i32) (ny: i32) (ns: i32) (scene: scene []) (cam
      |> iterate ns (map2 (map2 update) space)
      |> map (map end)
      |> reverse
-
--- ==
--- compiled input { 800 400 200 }
 
 import "perlin"
 module perlin = mk_perlin rnge
