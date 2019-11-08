@@ -18,7 +18,7 @@ let schlick (cosine: f32) (ref_idx: f32) =
 
 import "lib/github.com/diku-dk/cpprandom/random"
 
-module rnge = pcg32
+module rnge = minstd_rand
 module dist = uniform_real_distribution f32 rnge
 type rng = rnge.rng
 
@@ -115,8 +115,7 @@ let mk_texture_value [ny][nx] (turb: vec3 -> f32) (img: [ny][nx][3]u8) : texture
       let sines = f32.sin(10*p.x) * f32.sin(10*p.y) * f32.sin(10*p.z)
       in if sines < 0 then odd else even
     case #noise {scale} ->
-      vec3.scale (0.5 * (1 + f32.sin(scale * p.x + 5 * turb (scale `vec3.scale` p))))
-                 (vec(1,1,1))
+      vec3.scale (turb (scale `vec3.scale` p)) (vec(1,1,1))
     case #image ->
       let i = t32 (u * r32 nx)
       let j = t32 ((1-v) * r32 ny - 0.001)
@@ -518,37 +517,48 @@ let final (rng: rng) : (rng, []obj) =
   let (rng, spheres) = sphere_box rng 1000 white
   in (rng,
       floor ++
-      [xz_rect {x=300, z=265, k=0, material=light}
+      [
+
+       -- Light
+       xz_rect {x=300, z=265, k=0, material=light}
        |> obj_move (vec(123, 554, 147)),
 
+       -- Moving sphere
        obj_mk (#sphere {center1=vec(30, 0, 0), time0=0, time1=1, radius=50,
                         material=constant(0.7, 0.3, 0.1)})
        |> obj_move (vec(400, 400, 200)),
 
+       -- The glass sphere
        sphere {radius=50, material=#dielectric {ref_idx=1.5}}
        |> obj_move (vec(260, 150, 45)),
 
-       sphere {radius=50, material=#metal {albedo=vec(0.8,0.8,0.9), fuzz=10}}
+       -- The grey sphere to the right
+       sphere {radius=50, material=#metal {albedo=vec(0.8,0.8,0.9), fuzz=1}}
        |> obj_move (vec(0, 150, 145)),
 
+       -- The supposedly blue marble-ish sphere...
        sphere {radius=70, material=#dielectric {ref_idx=1.5}}
        |> obj_move (vec(360, 150, 145)),
 
-       sphere {radius=70, material=constant(0.2,0.4,0.9)}
+       -- ...and its effect.
+       sphere {radius=70, material=#isotropic {albedo=#constant {color=vec(0.2,0.4,1.3)}}}
        |> obj_move (vec(360, 150, 145))
        |> obj_medium 0.2,
 
-       sphere {radius=5000, material=constant(1,1,1)}
+       -- The fog covering everything
+       sphere {radius=5000, material=#isotropic {albedo=#constant {color=vec(1,1,1)}}}
        |> obj_medium 0.0001,
 
+       -- The globe
        sphere {radius=100, material=#lambertian {albedo=#image}}
        |> obj_move (vec(400, 200, 400)),
 
-       sphere {radius=80, material=#lambertian {albedo=#noise {scale=0.1}}}
+       -- The Perlin noise sphere
+       sphere {radius=80, material=#lambertian {albedo=#noise {scale=0.05}}}
        |> obj_move (vec(220, 280, 300))
 
       ] ++
-      map (obj_rot_y 15 >-> obj_move (vec(-100, 270, 395))) spheres
+      map (obj_rot_y 100 >-> obj_move (vec(-100, 270, 395))) spheres
      )
 
 import "lib/github.com/athas/matte/colour"
