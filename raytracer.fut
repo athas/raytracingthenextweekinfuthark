@@ -272,7 +272,7 @@ let rect_hit (rect: rect) (r: ray) (t0: f32) (t1: f32) : hit =
                          v = b/b1,
                          p = point_at_parameter r t,
                          normal = rect_cba rtype {a=0, b=0, c=1},
-                         t, material}
+                         material, t}
 
 type obj = {transform: transform,
             density: f32, -- non-nan if medium.
@@ -352,19 +352,22 @@ type bvh [n] = bvh [n] obj
 
 let bvh_hit [n] (bvh: bvh [n]) (r: ray) (t_min: f32) (t_max: f32) (rng: rng) : (rng, hit) =
   let contains aabb = aabb_hit aabb r t_min t_max
-  let closest_hit ((rng, hit), t_max) obj =
+  let closest_hit ((rng, j), t_max) i obj =
     match obj_hit obj r t_min t_max rng
-    case (rng, #no_hit) -> ((rng, hit), t_max)
-    case (rng, #hit h) -> ((rng, #hit h), h.t)
-  in bvh_fold contains closest_hit ((rng, #no_hit), t_max) bvh
-     |> (.1)
+    case (rng, #no_hit) -> ((rng, j), t_max)
+    case (rng, #hit h) -> ((rng, i), h.t)
+  let ((rng, j), t_max) = bvh_fold contains closest_hit ((rng, -1), t_max) bvh
+  in if j >= 0
+     then let obj = unsafe bvh.L[j]
+          in obj_hit obj r t_min (t_max+1) rng
+     else (rng, #no_hit)
 
 type scatter = #scatter {attenuation: vec3, scattered: ray}
              | #no_scatter
 
 let scattering (texture_value: texture_value)
-               (r: ray) (h: hit_info) (rng: rng) : (rng, scatter) =
-  match h.material
+               (r: ray) (h: hit_info) (material: material) (rng: rng) : (rng, scatter) =
+  match material
 
   case #diffuse_light _ ->
     (rng, #no_scatter)
@@ -440,7 +443,7 @@ let color (max_depth: i32) ({textures, bvh}: scene [])
       match bvh_hit bvh r 0.001 f32.highest rng
       case (rng, #hit h) ->
         (let emitted = emitted textures h.material h.u h.v h.p
-         in match scattering textures r h rng
+         in match scattering textures r h h.material rng
             case (rng, #scatter {attenuation, scattered}) ->
               ((rng, scattered),
                (depth+1,

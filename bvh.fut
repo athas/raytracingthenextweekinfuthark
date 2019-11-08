@@ -58,7 +58,7 @@ let bvh_mk [n] 't (bbf: t -> aabb) (ts: [n]t) : bvh [n] t =
                map (update inners) inners
   in {L = ts, I = inners}
 
-let bvh_fold [n] 'a 'b (contains: aabb -> bool) (op: b -> a -> b) (init: b) (t: bvh [n] a) =
+let bvh_fold [n] 'a 'b (contains: aabb -> bool) (op: b -> i32 -> a -> b) (init: b) (t: bvh [n] a) =
   (.1) <|
   loop (acc, cur, prev) = (init, 0, #inner (-1))
   while cur != -1 do
@@ -79,4 +79,4 @@ let bvh_fold [n] 'a 'b (contains: aabb -> bool) (op: b -> a -> b) (init: b) (t: 
      case #rec ptr ->
        match ptr
        case #inner i -> (acc, i, #inner cur)
-       case #leaf i -> (op acc (unsafe t.L[i]), cur, ptr)
+       case #leaf i -> (op acc i (unsafe t.L[i]), cur, ptr)
