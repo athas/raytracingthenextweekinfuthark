@@ -120,5 +120,5 @@ run:
 ```
 $ futhark pkg sync
 $ futhark opencl raytracer.fut
-$ (echo 1000 1000 5000; cat earthmap.data) | ./raytracer -b | python ~/repos/futhark/tools/data2png.py /dev/stdin scene.png
+$ (echo 1000 1000 5000; cat earthmap.data) | ./raytracer -b | python data2png.py /dev/stdin scene.png
 ```
