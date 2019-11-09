@@ -24,7 +24,7 @@ encountered the following new problems.
 
 ### Constructing a Bounding Volume Hierarchy (BVH)
 
-Steve Hollasch's C++ implementation uses a simple and elegant
+Peter Shirley's C++ implementation uses a simple and elegant
 recursive divide-and-conquer technique for constructing the BVH.
 Futhark does not support recursion, so I really dreaded implementing
 this.  Fortunately, Tero Karras has written a wonderful paper titled
