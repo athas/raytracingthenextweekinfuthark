@@ -38,7 +38,7 @@ is quite simple and runs fast, and it is straightforward to [build the
 BVH on top of
 that](https://github.com/athas/raytracingthenextweekinfuthark/blob/master/bvh.fut).
 In the end, BVH construction ends up taking less than 0.02% of the
-total runtime, makes the run time *O(log(n))* rather than *O(n)* in
+total runtime, yet makes the run time *O(log(n))* rather than *O(n)* in
 the number of objects.
 
 One significant difference is that my implementation constructs the
