@@ -9,7 +9,8 @@ Weekend](https://github.com/athas/raytracinginoneweekendinfuthark).
 
 The scene below took about 7 minutes to render on an AMD Vega 64 GPU,
 and is 1000x1000 pixels, with 5000 samples per pixel, and a maximum of
-50 reflections per ray.
+50 reflections per ray.  It takes about three minutes on an NVIDIA RTX
+2080 Ti.
 
 ![](scene_final.png)
 
