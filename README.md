@@ -123,3 +123,11 @@ $ futhark pkg sync
 $ futhark opencl raytracer.fut
 $ (echo 1000 1000 5000; cat earthmap.data) | ./raytracer -b | python data2png.py /dev/stdin scene.png
 ```
+
+### Implementations in other languages
+
+* [Rust](https://github.com/fralken/ray-tracing-the-next-week)
+
+* [Nim](https://gitlab.com/define-private-public/PeterShirley-RayTracing-Nim)
+
+* [Go](https://github.com/hunterloftis/oneweekend/blob/master/readme.md)
