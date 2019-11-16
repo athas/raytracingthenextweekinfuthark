@@ -173,16 +173,8 @@ let transform_ray (t: transform) (r: ray) : ray =
   let r = r with origin = r.origin vec3.- t.move
   in if t.rot_y == 0 then r
      else
-     let cos_theta = f32.cos t.rot_y
-     let sin_theta = f32.sin t.rot_y
-     let origin = r.origin with x = cos_theta * r.origin.x -
-                                    sin_theta * r.origin.z
-                           with z = sin_theta * r.origin.x +
-                                    cos_theta * r.origin.z
-     let direction = r.direction with x = cos_theta*r.direction.x -
-                                          sin_theta*r.direction.z
-                                 with z = sin_theta*r.direction.x +
-                                          cos_theta*r.direction.z
+     let origin = vec3.rot_y t.rot_y r.origin
+     let direction = vec3.rot_y t.rot_y r.origin
      in {origin, direction, time = r.time}
 
 type sphere = {center1: vec3,
