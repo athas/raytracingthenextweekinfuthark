@@ -151,16 +151,8 @@ let transform_hit (t: transform) (h: hit) : hit =
   case #hit h ->
     let h =
       if t.rot_y == 0 then h
-      else let cos_theta = f32.cos t.rot_y
-           let sin_theta = f32.sin t.rot_y
-           let p = h.p with x = cos_theta*h.p.x +
-                                sin_theta*h.p.z
-                       with z = -sin_theta*h.p.x +
-                                cos_theta*h.p.z
-           let normal = h.normal with x = cos_theta*h.normal.x +
-                                          sin_theta*h.normal.z
-                                 with z = -sin_theta*h.normal.x +
-                                          cos_theta*h.normal.z
+      else let p = vec3.rot_y (-t.rot_y) h.p
+           let normal = vec3.rot_y (-t.rot_y) h.normal
            in h with p = p with normal = normal
     in #hit (h with normal = (match t.flip
                               case #flip -> (-1) `vec3.scale` h.normal
