@@ -25,7 +25,7 @@ type ptr = #leaf i32 | #inner i32
 
 type inner = {aabb: aabb, left:ptr, right:ptr, parent:i32}
 
-type bvh [n] 't = {L: [n]t, I: []inner}
+type~ bvh [n] 't = {L: [n]t, I: []inner}
 
 let bvh_mk [n] 't (bbf: t -> aabb) (ts: [n]t) : bvh [n] t =
   let centers = map (bbf >-> aabb_center) ts
@@ -58,8 +58,8 @@ let bvh_mk [n] 't (bbf: t -> aabb) (ts: [n]t) : bvh [n] t =
                map (update inners) inners
   in {L = ts, I = inners}
 
-let bvh_fold [n] 'a 'b (contains: aabb -> bool) (op: b -> i32 -> a -> b) (init: b) (t: bvh [n] a) =
-  (.1) <|
+let bvh_fold [n] 'a 'b (contains: aabb -> bool) (op: b -> i32 -> a -> b) (init: b) (t: bvh [n] a) : b =
+  (.0) <|
   loop (acc, cur, prev) = (init, 0, #inner (-1))
   while cur != -1 do
   let node = unsafe t.I[cur]

@@ -64,7 +64,7 @@ let mk_radix_tree [n] (L: [n]u32) : []inner =
   let (inners, parents_a, parents_b) = tabulate (n-1) node |> unzip3
   let k = (n-1)*2
   let parents = scatter (replicate (n-1) (-1))
-                        (map (.1) parents_a ++ map (.1) parents_b : [k]i32)
-                        (map (.2) parents_a ++ map (.2) parents_b : [k]i32)
+                        (map (.0) parents_a ++ map (.0) parents_b :> [k]i32)
+                        (map (.1) parents_a ++ map (.1) parents_b :> [k]i32)
 
   in map2 (\{left, right} parent -> {left, right, parent}) inners parents

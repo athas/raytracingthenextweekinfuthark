@@ -30,7 +30,7 @@ let random_in_unit_sphere rng =
                 let (rng, z) = dist.rand (-1, 1) rng
                 in (rng, vec(x,y,z))
   let outside_sphere = vec3.quadrance >-> (>=1)
-  in iterate_while ((.2) >-> outside_sphere) ((.1) >-> new) (new rng)
+  in iterate_while ((.1) >-> outside_sphere) ((.0) >-> new) (new rng)
 
 type camera = { origin: vec3
               , lower_left_corner: vec3
@@ -104,7 +104,7 @@ type texture = #constant {color: vec3}
              | #noise {scale: f32}
              | #image
 
-type texture_value = texture -> (u: f32) -> (v: f32) -> (p: vec3) -> vec3
+type^ texture_value = texture -> (u: f32) -> (v: f32) -> (p: vec3) -> vec3
 
 let mk_texture_value [ny][nx] (turb: vec3 -> f32) (img: [ny][nx][3]u8) : texture_value =
   \(t: texture) (u: f32) (v: f32) (p: vec3) : vec3 ->
@@ -331,7 +331,7 @@ let obj_aabb (t0: f32) (t1: f32) (obj: obj) : aabb =
 
 import "bvh"
 
-type bvh [n] = bvh [n] obj
+type^ bvh [n] = bvh [n] obj
 
 let bvh_hit [n] (bvh: bvh [n]) (r: ray) (t_min: f32) (t_max: f32) (rng: rng) : (rng, hit) =
   let contains aabb = aabb_hit aabb r t_min t_max
@@ -414,8 +414,8 @@ let emitted (texture_value: texture_value)
   case _ ->
     vec(0, 0, 0)
 
-type scene [n] = {textures: texture_value,
-                  bvh: bvh [n]}
+type^ scene [n] = {textures: texture_value,
+                   bvh: bvh [n]}
 
 let color (max_depth: i32) ({textures, bvh}: scene [])
           (r: ray) (rng: rng) : (rng, vec3) =

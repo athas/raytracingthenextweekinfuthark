@@ -8,8 +8,8 @@ module type perlin = {
   type rng
   type perlin [n]
   val mk_perlin : (rng: rng) -> (n: i32) -> (rng, perlin [n])
-  val noise : perlin [] -> vec3 -> f32
-  val turb : perlin [] -> (depth: i32) -> vec3 -> f32
+  val noise [n] : perlin [n] -> vec3 -> f32
+  val turb [n] : perlin [n] -> (depth: i32) -> vec3 -> f32
 }
 
 import "lib/github.com/diku-dk/cpprandom/shuffle"
@@ -79,7 +79,7 @@ module mk_perlin (E: rng_engine) : perlin with rng = E.rng = {
     in perlin_interp c u v w
 
   let turb perlin (depth: i32) p =
-    f32.abs <| (.1) <|
+    f32.abs <| (.0) <|
     loop (accum, temp_p, weight) = (0, p, 1) for _i < depth do
       (accum + weight * noise perlin temp_p,
        vec3.scale 2 temp_p,
