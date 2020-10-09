@@ -7,7 +7,7 @@ import "lib/github.com/diku-dk/cpprandom/random"
 module type perlin = {
   type rng
   type perlin [n]
-  val mk_perlin : (rng: rng) -> (n: i32) -> (rng, perlin [n])
+  val mk_perlin : (rng: rng) -> (n: i64) -> (rng, perlin [n])
   val noise [n] : perlin [n] -> vec3 -> f32
   val turb [n] : perlin [n] -> (depth: i32) -> vec3 -> f32
 }
@@ -25,7 +25,7 @@ module mk_perlin (E: rng_engine) : perlin with rng = E.rng = {
   module shuffle = mk_shuffle E
   module dist = uniform_real_distribution f32 E
 
-  let generate (rng: E.rng) (n: i32) =
+  let generate (rng: E.rng) (n: i64) =
     rng
     |> E.split_rng n
     |> map (\rng -> let (rng, x) = dist.rand (-1,1) rng
@@ -35,11 +35,12 @@ module mk_perlin (E: rng_engine) : perlin with rng = E.rng = {
     |> unzip
     |> (\(rngs, xs) -> (E.join_rng rngs, xs))
 
-  let generate_perm (rng: E.rng) (n: i32) =
+  let generate_perm (rng: E.rng) (n: i64) =
     iota n
+    |> map i32.i64
     |> shuffle.shuffle rng
 
-  let mk_perlin (rng: E.rng) (n: i32) =
+  let mk_perlin (rng: E.rng) (n: i64) =
     let (rng, ranvec) = generate rng n
     let (rng, perm_x) = generate_perm rng n
     let (rng, perm_y) = generate_perm rng n
@@ -60,8 +61,8 @@ module mk_perlin (E: rng_engine) : perlin with rng = E.rng = {
                        (r32 k*ww + r32 (1-k)*(1-ww)) *
                        vec3.dot (c i j k) weight_v)
 
-  let noise {ranvec, perm_x, perm_y, perm_z} {x, y, z} : f32 =
-    let n = length ranvec
+  let noise [n] ({ranvec, perm_x, perm_y, perm_z}: perlin [n]) {x, y, z} : f32 =
+    let n = i32.i64 n
 
     let u = x - f32.floor x
     let v = y - f32.floor y
@@ -72,9 +73,9 @@ module mk_perlin (E: rng_engine) : perlin with rng = E.rng = {
     let k = t32 (f32.floor z)
 
     let c di dj dk =
-      unsafe ranvec[perm_x[(i+di) % n] ^
-                    perm_y[(j+dj) % n] ^
-                    perm_z[(k+dk) % n]]
+      #[unsafe] ranvec[perm_x[(i+di) % n] ^
+                       perm_y[(j+dj) % n] ^
+                       perm_z[(k+dk) % n]]
 
     in perlin_interp c u v w
 

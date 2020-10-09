@@ -17,8 +17,9 @@ let schlick (cosine: f32) (ref_idx: f32) =
   in r0 + (1-r0)*(1-cosine)**5
 
 import "lib/github.com/diku-dk/cpprandom/random"
+import "lib/github.com/diku-dk/cpprandom/romu"
 
-module rnge = minstd_rand
+module rnge = romu_trio32
 module dist = uniform_real_distribution f32 rnge
 type rng = rnge.rng
 
@@ -117,13 +118,13 @@ let mk_texture_value [ny][nx] (turb: vec3 -> f32) (img: [ny][nx][3]u8) : texture
     case #noise {scale} ->
       vec3.scale (turb (scale `vec3.scale` p)) (vec(1,1,1))
     case #image ->
-      let i = t32 (u * r32 nx)
-      let j = t32 ((1-v) * r32 ny - 0.001)
-      let i = i32.min (i32.max i 0) (nx-1)
-      let j = i32.min (i32.max j 0) (ny-1)
-      let r = unsafe f32.u8 img[j,i,0] / 256
-      let g = unsafe f32.u8 img[j,i,1] / 256
-      let b = unsafe f32.u8 img[j,i,2] / 256
+      let i = t32 (u * f32.i64 nx)
+      let j = t32 ((1-v) * f32.i64 ny - 0.001)
+      let i = i32.min (i32.max i 0) (i32.i64 nx-1)
+      let j = i32.min (i32.max j 0) (i32.i64 ny-1)
+      let r = #[unsafe] f32.u8 img[j,i,0] / 256
+      let g = #[unsafe] f32.u8 img[j,i,1] / 256
+      let b = #[unsafe] f32.u8 img[j,i,2] / 256
       in vec(r,g,b)
 
 type material = #lambertian {albedo: texture}
@@ -341,7 +342,7 @@ let bvh_hit [n] (bvh: bvh [n]) (r: ray) (t_min: f32) (t_max: f32) (rng: rng) : (
     case (rng, #hit h) -> ((rng, i), h.t)
   let ((rng, j), t_max) = bvh_fold contains closest_hit ((rng, -1), t_max) bvh
   in if j >= 0
-     then let obj = unsafe bvh.L[j]
+     then let obj = #[unsafe] bvh.L[j]
           in obj_hit obj r t_min (t_max+1) rng
      else (rng, #no_hit)
 
@@ -464,20 +465,20 @@ let box {p={x, y, z}, material} =
       c x,
       obj_flip (c 0)]
 
-let floor_tiles (rng: rng) (nb: i32) (material: material) : (rng, []obj) =
+let floor_tiles (rng: rng) (nb: i64) (material: material) : (rng, []obj) =
   let rngs = rnge.split_rng (nb*nb) rng |> unflatten nb nb
   let tile i j =
     let rng = rngs[i,j]
     let w = 100
-    let xd = -1000 + r32 i*w
-    let zd = -1000 + r32 j*w
+    let xd = -1000 + f32.i64 i*w
+    let zd = -1000 + f32.i64 j*w
     let (rng, f) = rand rng
     in (rng, map (obj_move (vec(xd,0,zd)))
                  (box {p={x=w, y=100 * (f+0.1), z=w}, material}))
   let (rngs, boxes) = tabulate_2d nb nb tile |> flatten |> unzip
   in (rnge.join_rng rngs, flatten boxes)
 
-let sphere_box (rng: rng) (ns: i32) (material: material) : (rng, []obj) =
+let sphere_box (rng: rng) (ns: i64) (material: material) : (rng, []obj) =
   let rngs = rnge.split_rng ns rng
   let sphere j =
     let rng = rngs[j]
@@ -547,7 +548,7 @@ let final (rng: rng) : (rng, []obj) =
 
 import "lib/github.com/athas/matte/colour"
 
-let render (max_depth: i32) (nx: i32) (ny: i32) (ns: i32) (scene: scene []) (cam: camera) (rngs: [ny][nx]rng) =
+let render (max_depth: i32) (nx: i64) (ny: i64) (ns: i32) (scene: scene []) (cam: camera) (rngs: [ny][nx]rng) =
   let start rng =
     (rng, vec(0,0,0))
   let end (_, acc) =
@@ -556,8 +557,8 @@ let render (max_depth: i32) (nx: i32) (ny: i32) (ns: i32) (scene: scene []) (cam
   let update (j, i) (rng, acc) =
     let (rng, ud) = rand rng
     let (rng, vd) = rand rng
-    let u = (r32(i) + ud) / r32(nx)
-    let v = (r32(j) + vd) / r32(ny)
+    let u = (f32.i64(i) + ud) / f32.i64(nx)
+    let v = (f32.i64(j) + vd) / f32.i64(ny)
     let (rng, r) = get_ray cam u v rng
     let (rng, col) = color max_depth scene r rng
     in (rng, acc vec3.+ col)
@@ -571,15 +572,15 @@ let render (max_depth: i32) (nx: i32) (ny: i32) (ns: i32) (scene: scene []) (cam
 import "perlin"
 module perlin = mk_perlin rnge
 
-let main (nx: i32) (ny: i32) (ns: i32) (img: [][][3]u8): [ny][nx]argb.colour =
+let main (nx: i64) (ny: i64) (ns: i32) (img: [][][3]u8): [ny][nx]argb.colour =
   let lookfrom = vec(478,278,-600)
   let lookat = vec(278,278,0)
   let dist_to_focus = 10
   let aperture = 0
   let vfov = 40
-  let cam = camera lookfrom lookat (vec(0,1,0)) vfov (r32 nx / r32 ny)
+  let cam = camera lookfrom lookat (vec(0,1,0)) vfov (f32.i64 nx / f32.i64 ny)
                    aperture dist_to_focus 0 1
-  let rng = rnge.rng_from_seed [nx, ny, ns]
+  let rng = rnge.rng_from_seed [i32.i64 nx, i32.i64 ny, ns]
   let (rng, world) = final rng
   let bvh = bvh_mk (obj_aabb cam.time0 cam.time1) world
   let (rng, p) = perlin.mk_perlin rng 256
