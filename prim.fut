@@ -5,22 +5,22 @@ type vec3 = vec3.vector
 
 -- A convenient alias so we don't have to indicate the fields all the
 -- time.
-let vec (x, y, z) : vec3 = {x,y,z}
+def vec (x, y, z) : vec3 = {x,y,z}
 
 type ray = {origin: vec3,
             direction: vec3,
             time: f32}
 
-let point_at_parameter (r: ray) (t: f32) =
+def point_at_parameter (r: ray) (t: f32) =
   vec3.(r.origin + scale t r.direction)
 
-let reflect (v: vec3) (n: vec3) : vec3 =
+def reflect (v: vec3) (n: vec3) : vec3 =
   v vec3.- (2 * vec3.dot v n `vec3.scale` n)
 
 -- | Axis-aligned bounding box.
 type aabb = { min: vec3, max: vec3 }
 
-let surrounding_box (box0: aabb) (box1: aabb) : aabb =
+def surrounding_box (box0: aabb) (box1: aabb) : aabb =
   let small = vec(f32.min box0.min.x box1.min.x,
                   f32.min box0.min.y box1.min.y,
                   f32.min box0.min.z box1.min.z)
@@ -29,12 +29,12 @@ let surrounding_box (box0: aabb) (box1: aabb) : aabb =
                 f32.max box0.max.z box1.max.z)
   in {min = small, max = big}
 
-let aabb_center ({min, max}: aabb) =
+def aabb_center ({min, max}: aabb) =
   {x=min.x + (max.x - min.x),
    y=min.y + (max.y - min.y),
    z=min.z + (max.z - min.z)}
 
-let aabb_rot_y (radians: f32) (aabb: aabb) : aabb =
+def aabb_rot_y (radians: f32) (aabb: aabb) : aabb =
   let sin_theta = f32.sin radians
   let cos_theta = f32.cos radians
   let min = vec(f32.highest, f32.highest, f32.highest)

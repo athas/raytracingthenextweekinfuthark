@@ -2,7 +2,7 @@ import "prim"
 
 type refraction = #no_refract | #refract vec3
 
-let refract (v: vec3) (n: vec3) (ni_over_nt: f32) : refraction =
+def refract (v: vec3) (n: vec3) (ni_over_nt: f32) : refraction =
   let uv = vec3.normalise v
   let dt = vec3.dot uv n
   let discriminant = 1 - ni_over_nt*ni_over_nt*(1-dt*dt)
@@ -11,7 +11,7 @@ let refract (v: vec3) (n: vec3) (ni_over_nt: f32) : refraction =
                     vec3.- (f32.sqrt discriminant `vec3.scale` n))
      else #no_refract
 
-let schlick (cosine: f32) (ref_idx: f32) =
+def schlick (cosine: f32) (ref_idx: f32) =
   let r0 = (1-ref_idx) / (1+ref_idx)
   let r0 = r0*r0
   in r0 + (1-r0)*(1-cosine)**5
@@ -22,9 +22,9 @@ module rnge = pcg32
 module dist = uniform_real_distribution f32 rnge
 type rng = rnge.rng
 
-let rand : rng -> (rng, f32) = dist.rand (0,1)
+def rand : rng -> (rng, f32) = dist.rand (0,1)
 
-let random_in_unit_sphere rng =
+def random_in_unit_sphere rng =
   let new rng = let (rng, x) = dist.rand (-1, 1) rng
                 let (rng, y) = dist.rand (-1, 1) rng
                 let (rng, z) = dist.rand (-1, 1) rng
@@ -40,7 +40,7 @@ type camera = { origin: vec3
               , lens_radius: f32
               , time0: f32, time1: f32 }
 
-let camera (lookfrom: vec3) (lookat: vec3) (vup: vec3) (vfov: f32) (aspect: f32)
+def camera (lookfrom: vec3) (lookat: vec3) (vup: vec3) (vfov: f32) (aspect: f32)
            (aperture: f32) (focus_dist: f32) (time0: f32) (time1: f32) : camera =
   let theta = vfov * f32.pi / 180
   let half_height = f32.tan (theta / 2)
@@ -59,7 +59,7 @@ let camera (lookfrom: vec3) (lookat: vec3) (vup: vec3) (vfov: f32) (aspect: f32)
      , lens_radius = aperture / 2
      , time0, time1 }
 
-let get_ray (c: camera) (s: f32) (t: f32) (rng: rng) : (rng, ray) =
+def get_ray (c: camera) (s: f32) (t: f32) (rng: rng) : (rng, ray) =
   let {origin, lower_left_corner, horizontal, vertical,
        u, v, w=_, lens_radius, time0, time1} = c
   let (rng, p) = random_in_unit_sphere rng
@@ -76,7 +76,7 @@ let get_ray (c: camera) (s: f32) (t: f32) (rng: rng) : (rng, ray) =
                           offset)
       , time })
 
-let aabb_hit ({min, max}: aabb) ({origin, direction, time=_}: ray) (tmin: f32) (tmax: f32): bool =
+def aabb_hit ({min, max}: aabb) ({origin, direction, time=_}: ray) (tmin: f32) (tmax: f32): bool =
   -- Unrolled loop.
   let iter min' max' origin' dir' tmin tmax =
     let invD = 1 / dir'
@@ -106,7 +106,7 @@ type texture = #constant {color: vec3}
 
 type^ texture_value = texture -> (u: f32) -> (v: f32) -> (p: vec3) -> vec3
 
-let mk_texture_value [ny][nx] (turb: vec3 -> f32) (img: [ny][nx][3]u8) : texture_value =
+def mk_texture_value [ny][nx] (turb: vec3 -> f32) (img: [ny][nx][3]u8) : texture_value =
   \(t: texture) (u: f32) (v: f32) (p: vec3) : vec3 ->
     match t
     case #constant {color} ->
@@ -141,12 +141,12 @@ type transform = {flip: #flip | #noflip,
                   rot_y: f32,
                   move: vec3}
 
-let transform_id : transform =
+def transform_id : transform =
   {flip = #noflip,
    rot_y = 0,
    move = vec(0, 0, 0)}
 
-let transform_hit (t: transform) (h: hit) : hit =
+def transform_hit (t: transform) (h: hit) : hit =
   match h
   case #hit h ->
     let h =
@@ -161,7 +161,7 @@ let transform_hit (t: transform) (h: hit) : hit =
   case _ ->
     h
 
-let transform_ray (t: transform) (r: ray) : ray =
+def transform_ray (t: transform) (r: ray) : ray =
   let r = r with origin = r.origin vec3.- t.move
   in if t.rot_y == 0 then r
      else
@@ -173,18 +173,18 @@ type sphere = {center1: vec3,
                time0: f32, time1: f32,
                radius: f32, material: material}
 
-let sphere_center (s: sphere) (time: f32): vec3 =
+def sphere_center (s: sphere) (time: f32): vec3 =
   if s.time0 == s.time1
   then vec(0,0,0)
   else ((time - s.time0) / (s.time1 - s.time0)) `vec3.scale` s.center1
 
-let sphere_uv (p: vec3) : {u: f32, v: f32} =
+def sphere_uv (p: vec3) : {u: f32, v: f32} =
   let phi = f32.atan2 p.z p.x
   let theta = f32.asin p.y
   in {u = 1 - (phi + f32.pi)/(2*f32.pi),
       v = (theta + f32.pi/2) / f32.pi}
 
-let sphere_hit (s: sphere) (r: ray) (t_min: f32) (t_max: f32) : hit =
+def sphere_hit (s: sphere) (r: ray) (t_min: f32) (t_max: f32) : hit =
   let center = sphere_center s r.time
   let oc = vec3.(r.origin - center)
   let a = vec3.dot r.direction r.direction
@@ -208,7 +208,7 @@ let sphere_hit (s: sphere) (r: ray) (t_min: f32) (t_max: f32) : hit =
           case #hit h -> #hit h
           case #no_hit -> try_hit ((-b + f32.sqrt(b*b-a*c))/a)
 
-let sphere_aabb (s: sphere) (t0: f32) (t1: f32) : aabb =
+def sphere_aabb (s: sphere) (t0: f32) (t1: f32) : aabb =
   let sphere_box center radius =
     let min = center vec3.- vec(radius, radius, radius)
     let max = center vec3.+ vec(radius, radius, radius)
@@ -227,22 +227,22 @@ type rect = {rtype: rect_type,
              k: f32,
              material: material}
 
-let rect_abc (rtype: rect_type) (v: vec3) : {a: f32, b: f32, c: f32} =
+def rect_abc (rtype: rect_type) (v: vec3) : {a: f32, b: f32, c: f32} =
   match rtype case #xy -> {a = v.x, b=v.y, c=v.z}
               case #xz -> {a = v.x, b=v.z, c=v.y}
               case #yz -> {a = v.y, b=v.z, c=v.x}
 
-let rect_cba (rtype: rect_type) {a: f32, b: f32, c: f32} : vec3 =
+def rect_cba (rtype: rect_type) {a: f32, b: f32, c: f32} : vec3 =
   match rtype case #xy -> {x=a, y=b, z=c}
               case #xz -> {x=a, y=c, z=b}
               case #yz -> {x=c, y=a, z=b}
 
-let rect_aabb (rect: rect) : aabb =
+def rect_aabb (rect: rect) : aabb =
   let {rtype, a1, b1, k, material=_} = rect
   in { min = rect_cba rtype {a=0, b=0, c= -0.0001},
        max = rect_cba rtype {a=a1, b=b1, c=k+0.0001} }
 
-let rect_hit (rect: rect) (r: ray) (t0: f32) (t1: f32) : hit =
+def rect_hit (rect: rect) (r: ray) (t0: f32) (t1: f32) : hit =
   let {rtype, a1, b1, k, material} = rect
   let origin = rect_abc rtype r.origin
   let direction = rect_abc rtype r.direction
@@ -261,21 +261,21 @@ type obj = {transform: transform,
             density: f32, -- non-nan if medium.
             obj: #sphere sphere | #rect rect}
 
-let obj_mk x : obj =
+def obj_mk x : obj =
   {obj = x, density = f32.nan, transform = transform_id }
 
-let obj_medium density (obj: obj) =
+def obj_medium density (obj: obj) =
   obj with density = density
 
-let obj_flip (obj: obj) = obj with transform.flip = #flip
+def obj_flip (obj: obj) = obj with transform.flip = #flip
 
-let obj_move (v: vec3) (obj: obj) : obj =
+def obj_move (v: vec3) (obj: obj) : obj =
   obj with transform.move = obj.transform.move vec3.+ v
 
-let obj_rot_y (angle: f32) (obj: obj) : obj =
+def obj_rot_y (angle: f32) (obj: obj) : obj =
   obj with transform.rot_y = obj.transform.rot_y + (f32.pi / 180) * angle
 
-let obj_hit (obj: obj) (r: ray) (t0: f32) (t1: f32) (rng: rng) : (rng, hit) =
+def obj_hit (obj: obj) (r: ray) (t0: f32) (t1: f32) (rng: rng) : (rng, hit) =
   let r = transform_ray obj.transform r
   let dohit t0 t1 =
     match obj.obj
@@ -318,7 +318,7 @@ let obj_hit (obj: obj) (r: ray) (t0: f32) (t1: f32) (rng: rng) : (rng, hit) =
 
   in (rng, transform_hit obj.transform h)
 
-let obj_aabb (t0: f32) (t1: f32) (obj: obj) : aabb =
+def obj_aabb (t0: f32) (t1: f32) (obj: obj) : aabb =
   let {min, max} = match obj.obj
                    case #sphere s -> sphere_aabb s t0 t1
                    case #rect rect -> rect_aabb rect
@@ -333,7 +333,7 @@ import "bvh"
 
 type^ bvh [n] = bvh [n] obj
 
-let bvh_hit [n] (bvh: bvh [n]) (r: ray) (t_min: f32) (t_max: f32) (rng: rng) : (rng, hit) =
+def bvh_hit [n] (bvh: bvh [n]) (r: ray) (t_min: f32) (t_max: f32) (rng: rng) : (rng, hit) =
   let contains aabb = aabb_hit aabb r t_min t_max
   let closest_hit ((rng, j), t_max) i obj =
     match obj_hit obj r t_min t_max rng
@@ -348,7 +348,7 @@ let bvh_hit [n] (bvh: bvh [n]) (r: ray) (t_min: f32) (t_max: f32) (rng: rng) : (
 type scatter = #scatter {attenuation: vec3, scattered: ray}
              | #no_scatter
 
-let scattering (texture_value: texture_value)
+def scattering (texture_value: texture_value)
                (r: ray) (h: hit_info) (material: material) (rng: rng) : (rng, scatter) =
   match material
 
@@ -406,7 +406,7 @@ let scattering (texture_value: texture_value)
     in (rng, #scatter {attenuation=texture_value albedo h.u h.v h.p,
                        scattered})
 
-let emitted (texture_value: texture_value)
+def emitted (texture_value: texture_value)
             (m: material) (u: f32) (v: f32) (p: vec3) : vec3 =
   match m
   case #diffuse_light {emit} ->
@@ -417,7 +417,7 @@ let emitted (texture_value: texture_value)
 type^ scene [n] = {textures: texture_value,
                    bvh: bvh [n]}
 
-let color (max_depth: i32) ({textures, bvh}: scene [])
+def color (max_depth: i32) ({textures, bvh}: scene [])
           (r: ray) (rng: rng) : (rng, vec3) =
   let ((rng, _), (_, _, color)) =
     loop
@@ -444,16 +444,16 @@ let color (max_depth: i32) ({textures, bvh}: scene [])
           color))
   in (rng, color)
 
-let xy_rect {x, y, k, material} =
+def xy_rect {x, y, k, material} =
   obj_mk (#rect {rtype=#xy, a1=x, b1=y, k, material})
 
-let xz_rect {x, z, k, material} =
+def xz_rect {x, z, k, material} =
   obj_mk (#rect {rtype=#xz, a1=x, b1=z, k, material})
 
-let yz_rect {y, z, k, material} =
+def yz_rect {y, z, k, material} =
   obj_mk (#rect {rtype=#yz, a1=y, b1=z, k, material})
 
-let box {p={x, y, z}, material} =
+def box {p={x, y, z}, material} =
   let a k = xy_rect {x, y, k, material}
   let b k = xz_rect {x, z, k, material}
   let c k = yz_rect {y, z, k, material}
@@ -464,7 +464,7 @@ let box {p={x, y, z}, material} =
       c x,
       obj_flip (c 0)]
 
-let floor_tiles (rng: rng) (nb: i64) (material: material) : (rng, []obj) =
+def floor_tiles (rng: rng) (nb: i64) (material: material) : (rng, []obj) =
   let rngs = rnge.split_rng (nb*nb) rng |> unflatten
   let tile i j =
     let rng = rngs[i,j]
@@ -477,7 +477,7 @@ let floor_tiles (rng: rng) (nb: i64) (material: material) : (rng, []obj) =
   let (rngs, boxes) = tabulate_2d nb nb tile |> flatten |> unzip
   in (rnge.join_rng rngs, flatten boxes)
 
-let sphere_box (rng: rng) (ns: i64) (material: material) : (rng, []obj) =
+def sphere_box (rng: rng) (ns: i64) (material: material) : (rng, []obj) =
   let rngs = rnge.split_rng ns rng
   let sphere j =
     let rng = rngs[j]
@@ -490,7 +490,7 @@ let sphere_box (rng: rng) (ns: i64) (material: material) : (rng, []obj) =
   let (rngs, spheres) = tabulate ns sphere |> unzip
   in (rnge.join_rng rngs, spheres)
 
-let final (rng: rng) : (rng, []obj) =
+def final (rng: rng) : (rng, []obj) =
   let constant (r,g,b) = #lambertian {albedo=#constant {color=vec(r, g, b)}}
   let white = constant (0.73, 0.73, 0.73)
   let ground = constant (0.48, 0.83, 0.53)
@@ -547,7 +547,7 @@ let final (rng: rng) : (rng, []obj) =
 
 import "lib/github.com/athas/matte/colour"
 
-let render (max_depth: i32) (nx: i64) (ny: i64) (ns: i32) (scene: scene []) (cam: camera) (rngs: [ny][nx]rng) =
+def render (max_depth: i32) (nx: i64) (ny: i64) (ns: i32) (scene: scene []) (cam: camera) (rngs: [ny][nx]rng) =
   let start rng =
     (rng, vec(0,0,0))
   let end (_, acc) =
@@ -571,7 +571,7 @@ let render (max_depth: i32) (nx: i64) (ny: i64) (ns: i32) (scene: scene []) (cam
 import "perlin"
 module perlin = mk_perlin rnge
 
-let main (nx: i64) (ny: i64) (ns: i32) (img: [][][3]u8): [ny][nx]argb.colour =
+def main (nx: i64) (ny: i64) (ns: i32) (img: [][][3]u8): [ny][nx]argb.colour =
   let lookfrom = vec(478,278,-600)
   let lookat = vec(278,278,0)
   let dist_to_focus = 10
