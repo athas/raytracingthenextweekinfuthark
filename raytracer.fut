@@ -466,7 +466,7 @@ let box {p={x, y, z}, material} =
       obj_flip (c 0)]
 
 let floor_tiles (rng: rng) (nb: i64) (material: material) : (rng, []obj) =
-  let rngs = rnge.split_rng (nb*nb) rng |> unflatten nb nb
+  let rngs = rnge.split_rng (nb*nb) rng |> unflatten
   let tile i j =
     let rng = rngs[i,j]
     let w = 100
@@ -586,7 +586,7 @@ let main (nx: i64) (ny: i64) (ns: i32) (img: [][][3]u8): [ny][nx]argb.colour =
   let (rng, p) = perlin.mk_perlin rng 256
   let textures = mk_texture_value (perlin.turb p 7) img
   let scene = {bvh, textures}
-  let rngs = rnge.split_rng (nx*ny) rng |> unflatten ny nx
+  let rngs = rnge.split_rng (ny*nx) rng |> unflatten
   let max_depth = 50
   let image = render max_depth nx ny ns scene cam rngs
   in image

@@ -112,7 +112,7 @@ run time drop by a factor of two.
 
 ## Running
 
-You will need Futhark 0.12.3 or newer to run this code.  You will also
+You will need Futhark 0.25.1 or newer to run this code.  You will also
 need
 [data2png.py](https://github.com/diku-dk/futhark/blob/master/tools/data2png.py),
 which turns Futhark values into PNG images.  Once these are available,
