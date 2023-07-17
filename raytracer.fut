@@ -17,9 +17,8 @@ let schlick (cosine: f32) (ref_idx: f32) =
   in r0 + (1-r0)*(1-cosine)**5
 
 import "lib/github.com/diku-dk/cpprandom/random"
-import "lib/github.com/diku-dk/cpprandom/romu"
 
-module rnge = romu_trio32
+module rnge = pcg32
 module dist = uniform_real_distribution f32 rnge
 type rng = rnge.rng
 
@@ -167,7 +166,7 @@ let transform_ray (t: transform) (r: ray) : ray =
   in if t.rot_y == 0 then r
      else
      let origin = vec3.rot_y t.rot_y r.origin
-     let direction = vec3.rot_y t.rot_y r.origin
+     let direction = vec3.rot_y t.rot_y r.direction
      in {origin, direction, time = r.time}
 
 type sphere = {center1: vec3,
@@ -543,7 +542,7 @@ let final (rng: rng) : (rng, []obj) =
        |> obj_move (vec(220, 280, 300))
 
       ] ++
-      map (obj_rot_y 100 >-> obj_move (vec(-100, 270, 395))) spheres
+      map (obj_rot_y 15 >-> obj_move (vec(-100, 270, 395))) spheres
      )
 
 import "lib/github.com/athas/matte/colour"
