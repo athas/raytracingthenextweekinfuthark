@@ -7,10 +7,9 @@ to the purely functional data-parallel language
 code.  See also the Futhark implementation of [Ray Tracing in One
 Weekend](https://github.com/athas/raytracinginoneweekendinfuthark).
 
-The scene below took about 7 minutes to render on an AMD Vega 64 GPU,
-and is 1000x1000 pixels, with 5000 samples per pixel, and a maximum of
-50 reflections per ray.  It takes about three minutes on an NVIDIA RTX
-2080 Ti.
+The scene below took about 90 seconds to render on an AMD RX 7900 XT
+GPU, and is 1000x1000 pixels, with 5000 samples per pixel, and a
+maximum of 50 reflections per ray.
 
 ![](scene_final.png)
 
